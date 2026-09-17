@@ -9,6 +9,11 @@
 .env.*
 !.env.example
 
+# --- Local working notes ---
+# Kept on disk so a future session picking up this repo has the full brief and
+# conventions, but deliberately not published.
+CLAUDE.md
+
 # --- Data ---
 # Generated corpora are reproducible from a seed, so they are not tracked --
 # but the directories are, via .gitkeep, so a fresh clone has somewhere to write.
