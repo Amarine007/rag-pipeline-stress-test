@@ -1,0 +1,47 @@
+# Experiment 1b -- Chunking strategy, at a fixed chunk size.
+#
+# Companion to chunk_size_sensitivity.yaml. Chunk size is pinned so that the
+# only thing changing is whether the chunker respects sentence boundaries.
+# Separate config rather than a second sweep key, because one variable per
+# experiment is enforced by the config loader.
+
+name: chunk_strategy_sensitivity
+description: >
+  Compare naive fixed-width chunking against boundary-aware recursive chunking
+  at a fixed chunk size, isolating the effect of cutting mid-sentence.
+seed: 20260917
+
+corpus:
+  n_relevant_docs: 40
+  distractor_ratio: 0.0
+  filler_sentences_per_doc: 6
+  seed: 20260917
+
+chunking:
+  strategy: fixed
+  chunk_size: 128            # small enough that boundary handling matters
+  chunk_overlap: 0
+
+embedding:
+  model_name: all-MiniLM-L6-v2
+  batch_size: 64
+  normalize: true
+
+retrieval:
+  k: 5
+  index_type: flat
+
+generation:
+  model: claude-opus-5
+  max_tokens: 1024
+  effort: low
+  use_cache: true
+
+judge:
+  model: claude-opus-5
+  max_tokens: 512
+  effort: low
+  use_cache: true
+
+sweep:
+  chunking.strategy: [fixed, recursive]

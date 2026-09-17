@@ -1,0 +1,65 @@
+# Experiment 3 -- Long-context stuffing vs. retrieved context.
+#
+# Varies: the retrieval condition, and where the gold document sits when the
+# whole corpus is stuffed into the prompt.
+# Held fixed: model, corpus, eval question set.
+#
+# Conditions (expanded in code, not by a config sweep, because they are not a
+# single scalar variable):
+#   - rag              : normal retrieval, top-k chunks
+#   - full_start       : whole corpus stuffed, gold document near the beginning
+#   - full_middle      : whole corpus stuffed, gold document near the middle
+#   - full_end         : whole corpus stuffed, gold document near the end
+#
+# The three stuffed conditions are the lost-in-the-middle probe: identical
+# context, identical token count, differing only in where the answer sits. If
+# accuracy dips for full_middle relative to full_start and full_end, position
+# -- not content -- is what moved it.
+#
+# Retrieval metrics are undefined for the stuffed conditions; there is no
+# retrieval step. Only the rag condition reports them, and the writeup must not
+# present a blank as a zero.
+
+name: long_context_vs_retrieval
+description: >
+  Compare retrieval against full-context stuffing, and vary the gold document's
+  position within the stuffed context to test for a lost-in-the-middle effect.
+seed: 20260917
+
+corpus:
+  # Deliberately smaller than the other experiments: every stuffed condition
+  # sends the entire corpus in the prompt for every question, so corpus size
+  # drives cost directly.
+  n_relevant_docs: 30
+  distractor_ratio: 1.0      # filler that makes the stuffed context long enough to matter
+  filler_sentences_per_doc: 6
+  seed: 20260917
+
+chunking:
+  strategy: recursive
+  chunk_size: 400
+  chunk_overlap: 50
+
+embedding:
+  model_name: all-MiniLM-L6-v2
+  batch_size: 64
+  normalize: true
+
+retrieval:
+  k: 5
+  index_type: flat
+
+generation:
+  model: claude-opus-5
+  max_tokens: 1024
+  effort: low
+  use_cache: true
+
+judge:
+  model: claude-opus-5
+  max_tokens: 512
+  effort: low
+  use_cache: true
+
+# No `sweep` key: the conditions are categorical and are enumerated by
+# experiments/long_context_vs_retrieval/run.py.

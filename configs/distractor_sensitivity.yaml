@@ -1,0 +1,59 @@
+# Experiment 2 -- Distractor sensitivity.
+#
+# Varies: the ratio of topically-similar-but-irrelevant documents in the corpus.
+# Held fixed: the 40 relevant documents, chunk size, k, eval question set.
+#
+# Distractors are generated from the same sentence templates as relevant
+# documents, differing only in system name and values. They are therefore
+# lexically and topically near-identical to the gold document while containing
+# no correct answer -- the hard case, not the easy one.
+#
+# Two failure modes are expected and are measured separately: the gold chunk
+# falls out of the top k (a retrieval failure), or it stays in the top k but the
+# model reports a distractor's value anyway (a generation failure). The
+# hallucination vs. abstention split in the answer metrics is what distinguishes
+# a model that degrades gracefully from one that does not.
+
+name: distractor_sensitivity
+description: >
+  Inject increasing ratios of topically similar but irrelevant documents,
+  measuring retrieval degradation and answer degradation separately.
+seed: 20260917
+
+corpus:
+  n_relevant_docs: 40
+  distractor_ratio: 0.0
+  filler_sentences_per_doc: 6
+  seed: 20260917
+
+chunking:
+  strategy: recursive        # boundary-aware, so chunking is not a confound here
+  chunk_size: 400
+  chunk_overlap: 50
+
+embedding:
+  model_name: all-MiniLM-L6-v2
+  batch_size: 64
+  normalize: true
+
+retrieval:
+  k: 5
+  index_type: flat
+
+generation:
+  model: claude-opus-5
+  max_tokens: 1024
+  effort: low
+  use_cache: true
+
+judge:
+  model: claude-opus-5
+  max_tokens: 512
+  effort: low
+  use_cache: true
+
+sweep:
+  # 0x through 4x the relevant corpus: 40 relevant documents against up to 160
+  # distractors. The name pool holds 256 unique systems, so this fits with room
+  # to spare.
+  corpus.distractor_ratio: [0.0, 0.5, 1.0, 2.0, 3.0, 4.0]
