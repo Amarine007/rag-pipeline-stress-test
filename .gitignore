@@ -1,3 +1,46 @@
+﻿# ============================================================
+# Project-specific rules for rag-pipeline-stress-test.
+# The comprehensive Python template from the initial commit follows below.
+# ============================================================
+
+# --- Secrets ---
+# API keys live in .env, which is never committed.
+.env
+.env.*
+!.env.example
+
+# --- Data ---
+# Generated corpora are reproducible from a seed, so they are not tracked --
+# but the directories are, via .gitkeep, so a fresh clone has somewhere to write.
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+# Eval sets are small, hand-curated, and reproducibility-critical: keep them tracked.
+!data/eval_sets/
+
+# --- Results ---
+# Per-question run logs are large and regenerable; aggregated CSVs and the
+# figures that go into the paper are tracked.
+results/logs/*
+!results/logs/.gitkeep
+results/**/*.jsonl
+!results/figures/
+!results/figures/**
+!results/*.csv
+
+# --- Caches ---
+# The LLM response cache is what makes re-runs reproducible, but it is a local
+# artifact that can grow large; regenerate it rather than commit it.
+.llm_cache/
+.embedding_cache/
+.cache/
+*.faiss
+*.index
+
+# ============================================================
+# Standard Python template (from the repository's initial commit)
+# ============================================================
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

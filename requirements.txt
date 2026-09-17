@@ -1,0 +1,23 @@
+# Core numerics
+numpy>=2.0
+
+# Embeddings (local, deterministic, offline after first model download)
+sentence-transformers>=3.0
+torch>=2.4
+
+# Vector store (used directly, not via an orchestration framework)
+faiss-cpu>=1.8
+
+# Generation + LLM-judge
+anthropic>=1.0
+
+# Config + environment
+pyyaml>=6.0
+python-dotenv>=1.0
+
+# Analysis + figures
+pandas>=2.2
+matplotlib>=3.9
+
+# Testing
+pytest>=8.0
