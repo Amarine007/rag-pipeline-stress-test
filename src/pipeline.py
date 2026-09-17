@@ -108,8 +108,13 @@ class RAGPipeline:
             raise RuntimeError("Index not built. Call build_index() first.")
         return self.retriever.retrieve(question, k)
 
-    def generate(self, question: str, context: str) -> str:
-        response = self.client.complete(
+    def generate_response(self, question: str, context: str):
+        """Generate an answer, returning the full response with token counts.
+
+        The long-context experiment reports context size, so it needs the usage
+        numbers rather than just the text.
+        """
+        return self.client.complete(
             prompt=build_answer_prompt(question, context),
             system=ANSWER_SYSTEM,
             model=self.config.generation.model,
@@ -117,7 +122,9 @@ class RAGPipeline:
             effort=self.config.generation.effort,
             temperature=self.config.generation.temperature,
         )
-        return response.text
+
+    def generate(self, question: str, context: str) -> str:
+        return self.generate_response(question, context).text
 
     def answer_with_retrieval(self, question: str, k: int | None = None) -> tuple[str, list[SearchHit]]:
         hits = self.retrieve(question, k)
