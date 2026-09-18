@@ -114,8 +114,10 @@ def run_sweep_experiment(default_config: Path, argv: list[str] | None = None) ->
     # Measured, not estimated. A pilot's whole job is to price the full grid
     # before it is paid for.
     questions_run = sum(r.answer_metrics.get("n", 0) for r in results)
-    n_conditions = len(results)
-    full_questions = config.corpus.n_relevant_docs * n_conditions
+    # Project against the config's declared sweep, not the conditions this
+    # invocation happened to run. `--values` runs a subset, and scaling to that
+    # subset would quote the cost of the pilot's shape rather than the grid's.
+    full_questions = config.corpus.n_relevant_docs * len(config.sweep[sweep_key])
     print("\nCost:")
     print(
         format_cost_report(
