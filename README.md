@@ -31,8 +31,9 @@ interesting signal.
 
 ## Status
 
-🚧 **In progress.** The pipeline is complete and tested. Experiments 1 and 2 have run and are
-written up; experiment 3 and the final polish are outstanding.
+**All three stress tests have run and are written up** in [`docs/paper_draft.md`](docs/paper_draft.md).
+One produced a strong positive result; the other two produced a negative and a null result, and
+are reported as such.
 
 ### Experiment 1 — chunk-size sensitivity
 
@@ -82,6 +83,32 @@ here while the same pipeline at k=1 was already losing answers.
 
 Failures are also a property of the question rather than of the noise — the set of failing
 questions is strictly nested as distractors are added, and the same five fail at both 3× and 4×.
+
+### Experiment 3 — long-context vs. retrieved-context
+
+4 conditions, n=50 questions, 100-document corpus. **A null result.** All four conditions answered
+50 of 50 correctly, so no lost-in-the-middle effect could be detected.
+
+| condition | rag | full_start | full_middle | full_end |
+| --- | --- | --- | --- | --- |
+| mean input tokens | 872 | 26,491 | 26,491 | 26,491 |
+| answer accuracy | 1.000 | 1.000 | 1.000 | 1.000 |
+
+The manipulation itself was correct — the gold document sits at index 0, 50 and 99 of 100, and
+input tokens are identical to the digit across the three stuffed conditions. The task was simply
+too easy to register a position effect: 26k tokens is a small fraction of the model's window, and
+each question names the specific system it asks about, making the task closer to lookup than
+synthesis. At 50/50 the 95% interval is [0.929, 1.000], so **an effect smaller than ~7 points
+could not have been seen.** This rules out a large position effect under these conditions and
+nothing more; redesigning it with a far longer context and synthesis-style questions is the
+highest-value follow-up in the project.
+
+The one usable comparison is cost. The stuffed conditions match retrieval's accuracy while sending
+**30× more input tokens per question** (26,491 vs 872) — roughly $0.13 against $0.004 per question
+— and that gap widens linearly with corpus size. Where both approaches are equally accurate,
+retrieval is the same answer at a thirtieth of the price.
+
+---
 
 Full per-condition results are in `results/`, per-question detail in `results/logs/`. Read every
 number against its N: n=80 puts the 95% Wilson interval on a proportion near 0.5 at roughly ±11

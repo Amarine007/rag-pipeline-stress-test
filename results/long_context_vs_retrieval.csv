@@ -1,0 +1,5 @@
+condition,n,accuracy,abstention_rate,hallucination_rate,hit_rate_at_k,mrr,mean_input_tokens
+rag,50,1.0,0.0,0.0,1.0,0.9216666666666667,872.2
+full_start,50,1.0,0.0,0.0,,,26491.3
+full_middle,50,1.0,0.0,0.0,,,26491.3
+full_end,50,1.0,0.0,0.0,,,26491.3

@@ -1,9 +1,9 @@
 # Where Retrieval-Augmented Generation Breaks: Three Controlled Stress Tests
 
-**Status: draft. Experiment 1 is complete and written up; Experiments 2 and 3
-are pending.** No numbers appear anywhere in this document until the experiment
-producing them has actually been run. Outstanding sections are marked
-`[PENDING]` rather than filled with plausible estimates.
+**Status: draft. All three experiments have been run and written up.** Every
+number below comes from a run that actually happened; nothing is estimated.
+Two of the three experiments produced negative or null results, and are
+reported as such rather than reframed — see §4.1, §5.1, and Limitations 7–8.
 
 ---
 
@@ -470,7 +470,69 @@ as "retrieval failed" when the truth is that retrieval did not happen.
 
 ### 5.1 Results
 
-`[PENDING — experiment not yet run]`
+n = 50 questions per condition, over a 100-document corpus (50 relevant, 50
+distractors).
+
+![Long-context vs. retrieval](../results/figures/long_context_vs_retrieval.png)
+
+| condition | n | gold doc index | mean input tokens | accuracy [95% CI] | abstention | hallucination | hit rate@5 | MRR |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| rag | 50 | — | 872 | 1.000 [0.929, 1.000] | 0.000 | 0.000 | 1.000 | 0.922 |
+| full_start | 50 | 0 | 26,491 | 1.000 [0.929, 1.000] | 0.000 | 0.000 | — | — |
+| full_middle | 50 | 50 | 26,491 | 1.000 [0.929, 1.000] | 0.000 | 0.000 | — | — |
+| full_end | 50 | 99 | 26,491 | 1.000 [0.929, 1.000] | 0.000 | 0.000 | — | — |
+
+**No position effect was detected, because no condition failed at all.** All
+four conditions answered 50 of 50 correctly. There is no lost-in-the-middle dip
+here, and no difference between retrieval and stuffing.
+
+The experimental manipulation itself worked: the gold document sits at index 0,
+50, and 99 of 100 in the three stuffed conditions, and mean input tokens are
+identical to the digit (26,491) across all three, so the conditions differ in
+position and in nothing else. The probe was correctly constructed; the task was
+simply too easy for it to register.
+
+**This is a ceiling effect, and it is a limitation of the experiment rather
+than a finding about the model.** At 50/50 in every condition, the 95% Wilson
+interval is [0.929, 1.000]; an effect smaller than roughly 7 points could not
+have been detected at this N. The result rules out a *large* position effect
+under these conditions. It says nothing about a small one, and it is not
+evidence that lost-in-the-middle does not exist.
+
+Three reasons the probe had no headroom, all of which are fixable:
+
+1. **The context is short by current standards.** 26k tokens is a small
+   fraction of this model's window. Liu et al.'s effect was characterized on
+   models and context lengths where 26k was a substantial fraction of capacity;
+   reproducing it now plausibly requires a context one or two orders of
+   magnitude larger, not a corpus of 100 short documents.
+2. **The question names its target.** Each question names a specific fictional
+   system, so finding the answer is closer to exact lookup than to synthesis.
+   A model scanning 100 documents for a named entity has an easy task
+   regardless of where that entity sits.
+3. **The corpus is small and clean.** 50 distractors, template-generated and
+   individually short, do not tax attention the way a large heterogeneous
+   corpus would.
+
+**The one usable comparison is cost, not accuracy.** The stuffed conditions
+reach the same accuracy as retrieval while sending **30× more input tokens per
+question** (26,491 vs 872). On a per-question basis at current prices that is
+roughly $0.13 against $0.004. Where the two approaches are equally accurate,
+retrieval is the same answer at a thirtieth of the price — and that gap widens
+linearly with corpus size, since the stuffed prompt grows with the corpus while
+the retrieved prompt does not. This is the practical argument for retrieval at
+this scale, and it holds independently of whether a position effect exists.
+
+Note also that retrieval's own MRR is 0.922 rather than 1.000 here: the gold
+chunk is reliably *in* the top 5 but not reliably first. Consistent with
+Experiment 2, rank is where retrieval degrades first, even where hit rate and
+accuracy are both perfect.
+
+**Redesigning this experiment** is the single highest-value follow-up in this
+project. It needs a context large enough to strain the model (hundreds of
+thousands of tokens), questions that require synthesis rather than lookup, or
+both. As run, it is a correctly-built instrument pointed at a target too easy
+to register on it.
 
 ---
 
@@ -521,9 +583,25 @@ caveats.
    materially strengthen the results and is the most valuable single addition to
    this work.
 
-7. **Position probe granularity.** Experiment 3 tests three positions
-   (start/middle/end), not a fine-grained sweep, so it can detect the presence of
-   a position effect but not its shape.
+7. **Experiment 3 hit a ceiling and is uninformative about position.** Every
+   condition scored 50/50, so the lost-in-the-middle probe had no headroom to
+   register anything. This is the most significant limitation in the paper: one
+   of the three stress tests did not stress its pipeline. The construction is
+   sound — position and token count were controlled exactly — but the task was
+   too easy, for the reasons given in §5.1. The experiment rules out a large
+   position effect at 26k tokens with lookup-style questions and rules out
+   nothing else. It also tests only three positions rather than a fine-grained
+   sweep, so even with headroom it could have detected a dip's presence but not
+   its shape.
+
+8. **Only one experiment produced a strong positive result.** Experiment 1
+   yields a clear, mechanistically explained non-monotonic curve. Experiment 2
+   is a negative result at the ratios tested, and Experiment 3 is a null result
+   from a ceiling. Two of three stress tests failing to break the pipeline is
+   itself worth stating plainly: this configuration is more robust than the
+   framing of this paper anticipated, and the experiments that would break it
+   (k=1 retrieval, distractors reusing system names, far longer contexts,
+   multi-hop questions) are named in the relevant sections but were not run.
 
 ---
 
