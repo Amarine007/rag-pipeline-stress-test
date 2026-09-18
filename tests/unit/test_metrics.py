@@ -10,6 +10,7 @@ from src.evaluation.metrics import (
     is_relevant,
     score_retrieval,
 )
+from src.evaluation.cost import format_cost_report, price_usage
 from src.ingestion.documents import Document, EvalQuestion, FactSpan
 from src.retrieval.vector_store import SearchHit
 
@@ -207,3 +208,38 @@ def test_chunk_with_only_the_value_sentence_is_not_relevant():
 
 def test_chunk_with_binding_and_value_is_relevant():
     assert is_relevant(_multi_chunk(0, 111), MULTI_QUESTION, MULTI_DOCS_BY_ID)
+
+
+# -- cost accounting ------------------------------------------------------
+
+
+def test_price_usage_matches_published_rates():
+    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000, "api_calls": 2}
+    estimate = price_usage(usage, "claude-opus-5")
+    assert estimate.usd == pytest.approx(30.00)  # $5 in + $25 out
+
+
+def test_batch_transport_halves_the_price():
+    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000, "api_calls": 2}
+    assert price_usage(usage, "claude-opus-5", batched=True).usd == pytest.approx(15.00)
+
+
+def test_unknown_model_raises_rather_than_costing_zero():
+    with pytest.raises(ValueError, match="No price on file"):
+        price_usage({"input_tokens": 10}, "claude-imaginary-9")
+
+
+def test_scaling_a_pilot_projects_the_full_grid():
+    pilot = price_usage(
+        {"input_tokens": 10_000, "output_tokens": 5_000, "api_calls": 20}, "claude-opus-5"
+    )
+    full = pilot.scaled(4.0)
+    assert full.usd == pytest.approx(pilot.usd * 4)
+    assert full.api_calls == 80
+
+
+def test_cost_report_says_nothing_was_spent_when_fully_cached():
+    usage = {"input_tokens": 0, "output_tokens": 0, "api_calls": 0, "cached_calls": 40}
+    report = format_cost_report([usage], "claude-opus-5", False, 40, 160)
+    assert "spent nothing" in report
+    assert "Projected" not in report

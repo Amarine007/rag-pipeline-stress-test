@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from src.config import PROJECT_ROOT, apply_override, load_config
+from src.evaluation.cost import format_cost_report
 from src.sweep import run_sweep, summarize
 
 
@@ -109,6 +110,22 @@ def run_sweep_experiment(default_config: Path, argv: list[str] | None = None) ->
     write_csv(rows, csv_path)
     print(f"\nWrote {len(rows)} conditions to {csv_path}")
     print(f"Per-question detail in {log_path}")
+
+    # Measured, not estimated. A pilot's whole job is to price the full grid
+    # before it is paid for.
+    questions_run = sum(r.answer_metrics.get("n", 0) for r in results)
+    n_conditions = len(results)
+    full_questions = config.corpus.n_relevant_docs * n_conditions
+    print("\nCost:")
+    print(
+        format_cost_report(
+            [r.usage for r in results],
+            model=config.generation.model,
+            batched=config.generation.use_batch,
+            questions_run=questions_run,
+            questions_full=full_questions,
+        )
+    )
     return 0
 
 

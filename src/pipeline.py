@@ -47,6 +47,10 @@ class RunResult:
     answer_metrics: dict = field(default_factory=dict)
     per_question: list[dict] = field(default_factory=list)
     corpus_stats: dict = field(default_factory=dict)
+    usage: dict = field(default_factory=dict)
+    """Tokens this condition actually spent. Lets a reduced pilot price the full
+    grid from measurement rather than estimate; cached calls are counted apart
+    because they cost nothing."""
     elapsed_seconds: float = 0.0
 
     def to_dict(self) -> dict:
@@ -192,6 +196,7 @@ class RAGPipeline:
         documents_by_id = {d.doc_id: d for d in self.documents}
 
         started = time.time()
+        usage_before = self.client.usage_snapshot()
 
         # Three phases rather than one loop per question. Retrieval is local and
         # cheap; generation and judging are the API calls, and grouping each into
@@ -253,6 +258,7 @@ class RAGPipeline:
             answer_metrics=aggregate_answers(answer_scores),
             per_question=per_question,
             corpus_stats=self.corpus_stats(),
+            usage=self.client.usage_delta(usage_before, self.client.usage_snapshot()),
             elapsed_seconds=round(time.time() - started, 2),
         )
 

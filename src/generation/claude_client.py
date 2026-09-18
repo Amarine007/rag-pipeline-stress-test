@@ -103,6 +103,15 @@ class ClaudeClient:
         self.use_batch = use_batch
         self.poll_seconds = poll_seconds
         self._client = None
+        # Running token totals, so a pilot can price the full grid from measured
+        # usage instead of a guess. Cached calls are counted separately because
+        # they cost nothing -- conflating them would understate a cold run.
+        self.usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "api_calls": 0,
+            "cached_calls": 0,
+        }
         if self.use_cache:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -178,6 +187,23 @@ class ClaudeClient:
                 )
         return request
 
+    def _count(self, record: dict | None) -> None:
+        """Add one call to the running usage totals. `None` means a cache hit."""
+        if record is None:
+            self.usage["cached_calls"] += 1
+            return
+        self.usage["api_calls"] += 1
+        self.usage["input_tokens"] += record.get("input_tokens", 0)
+        self.usage["output_tokens"] += record.get("output_tokens", 0)
+
+    def usage_snapshot(self) -> dict:
+        return dict(self.usage)
+
+    @staticmethod
+    def usage_delta(before: dict, after: dict) -> dict:
+        """Usage accrued between two snapshots -- one condition's share of a run."""
+        return {key: after[key] - before[key] for key in after}
+
     @staticmethod
     def _record_from_message(message) -> dict:
         """Flatten an API message into the dict the cache and LLMResponse share."""
@@ -204,6 +230,7 @@ class ClaudeClient:
         if self.use_cache:
             hit = self._read_cache(key)
             if hit is not None:
+                self._count(None)
                 return LLMResponse(
                     text=hit["text"],
                     model=hit.get("model", model),
@@ -215,6 +242,7 @@ class ClaudeClient:
 
         response = self.client.messages.create(**request)
         record = self._record_from_message(response)
+        self._count(record)
 
         # A refusal is a legitimate outcome to record and report, not to cache as
         # if it were an answer -- caching it would freeze a transient safety
@@ -250,6 +278,7 @@ class ClaudeClient:
             key = self._cache_key(request)
             hit = self._read_cache(key) if self.use_cache else None
             if hit is not None:
+                self._count(None)
                 results[item.custom_id] = LLMResponse(
                     text=hit["text"],
                     model=hit.get("model", item.model),
@@ -320,6 +349,7 @@ class ClaudeClient:
                 continue
 
             record = self._record_from_message(entry.result.message)
+            self._count(record)
             if self.use_cache and record["stop_reason"] != "refusal":
                 self._write_cache(cache_keys[entry.custom_id], record)
             results[entry.custom_id] = LLMResponse(cached=False, **record)
