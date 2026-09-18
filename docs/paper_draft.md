@@ -532,6 +532,14 @@ shows ranking pressure being absorbed rather than expressed. Re-running the
 identical sweep at k = 1 removes that slack. Nothing else changes — same corpus,
 same seed, same questions, same chunking; only `retrieval.k`.
 
+![Distractor sensitivity at k=1](../results/figures/distractor_sensitivity_k1.png)
+
+The three retrieval curves coincide exactly in the left panel. That is
+definitional rather than a plotting error: with one retrieved chunk, hit rate,
+precision@k and MRR all reduce to the same indicator of whether that chunk is
+answer-bearing. The metric family that was most informative at k = 5 carries no
+extra information at k = 1 — the same point from the opposite direction.
+
 | ratio | hit@1 [95% CI] | accuracy [95% CI] | abstention | hallucination | (hit@5) | (acc @ k=5) |
 | --- | --- | --- | --- | --- | --- | --- |
 | 0x | 0.875 [0.785, 0.931] | 0.912 [0.830, 0.957] | 0.087 | 0.000 | 1.000 | 1.000 |
@@ -758,11 +766,28 @@ caveats.
 pip install -r requirements.txt
 cp .env.example .env          # add ANTHROPIC_API_KEY
 
-python experiments/chunk_size_sensitivity/run.py
-python experiments/distractor_sensitivity/run.py
-python experiments/long_context_vs_retrieval/run.py
+# the three headline experiments
+python experiments/chunk_size_sensitivity/run.py                 # §3.1
+python experiments/distractor_sensitivity/run.py                 # §4.1
+python experiments/long_context_vs_retrieval/run.py              # §5.1
+
+# the three follow-ups, each a config change on an existing runner
+python experiments/chunk_size_sensitivity/run.py --config configs/chunk_strategy_sensitivity.yaml   # §3.2
+python experiments/distractor_sensitivity/run.py --config configs/distractor_sensitivity_k1.yaml    # §4.2
+python experiments/chunk_size_sensitivity/run.py --config configs/chunk_size_variance.yaml          # §3.3
+
 python scripts/make_figures.py --tables
 ```
+
+The runner a follow-up uses is determined by the *shape* of its sweep, not by
+its subject: §3.2 and §4.2 are scalar sweeps and so reuse the sweep runner with
+a different config, which is why `src/` needs no experiment-specific code.
+
+**One warning about `chunk_size_variance`.** That config sets `use_cache: false`
+on both generation and judging, because its entire purpose is to draw fresh
+samples. It is the only config here that costs money every time it runs (~$0.90
+at the time of writing); every other experiment replays from cache for free
+after its first run.
 
 Any runner accepts `--max-questions N`, which evaluates only the first *N*
 questions while leaving the corpus untouched. It exists for cheap pilot runs

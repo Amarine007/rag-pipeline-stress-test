@@ -29,6 +29,14 @@ Retrieval quality and answer quality are always reported separately. A pipeline 
 either stage independently, and collapsing them into a single number throws away the only
 interesting signal.
 
+Three follow-ups were added after the headline runs, each isolating one further variable:
+
+| Follow-up | Varied | Why it exists |
+| --- | --- | --- |
+| Chunking strategy | Fixed-width vs. recursive, at one fixed size | Separates "the size is wrong" from "the splitter is wrong" |
+| Distractors at k=1 | `k`, 5 → 1 | The k=5 sweep had four spare slots absorbing the ranking pressure MRR was measuring |
+| Cold-run variance | Nothing — same run, repeated, cache off | Tests whether the headline chunk-size result is a stable quantity or a single lucky draw |
+
 ## Status
 
 **All three stress tests have run and are written up** in [`docs/paper_draft.md`](docs/paper_draft.md).
@@ -154,6 +162,51 @@ cp .env.example .env          # then add your ANTHROPIC_API_KEY
 
 The embedding model (`all-MiniLM-L6-v2`) downloads automatically on first use and runs locally
 thereafter — no embedding API calls, no per-run cost, and identical vectors on every run.
+
+## Usage
+
+Every experiment is a runner plus a config. The three headline experiments run with no arguments:
+
+```bash
+python experiments/chunk_size_sensitivity/run.py            # §3.1  chunk size 64-800
+python experiments/distractor_sensitivity/run.py            # §4.1  distractor ratio 0x-4x
+python experiments/long_context_vs_retrieval/run.py         # §5.1  retrieval vs. stuffing
+```
+
+The three follow-ups are the same runners pointed at a different config — a scalar sweep needs no
+new code, only a new config:
+
+```bash
+python experiments/chunk_size_sensitivity/run.py --config configs/chunk_strategy_sensitivity.yaml
+python experiments/distractor_sensitivity/run.py --config configs/distractor_sensitivity_k1.yaml
+python experiments/chunk_size_sensitivity/run.py --config configs/chunk_size_variance.yaml
+```
+
+Then build every figure and markdown table:
+
+```bash
+python scripts/make_figures.py --tables
+```
+
+Useful flags on any runner:
+
+| flag | effect |
+| --- | --- |
+| `--max-questions N` | Evaluate only the first N questions. Corpus is unchanged; output goes to `*-pilotN` files so a pilot can never overwrite a full run. **Use this to price a run before paying for it.** |
+| `--values ...` | Run a subset of the swept values. |
+| `--batch` / `--no-batch` | Override `generation.use_batch`. Sequential is the default — see below. |
+| `--quiet` | Suppress per-condition progress. |
+
+**Re-running costs nothing.** Every LLM call is cached to disk by a hash of its inputs, so a
+completed experiment replays exactly and submits no requests. The one exception is
+`configs/chunk_size_variance.yaml`, which disables the cache deliberately — drawing fresh samples
+is its entire purpose — and so costs real money (~$0.90) on every invocation.
+
+**Sequential is the default, on purpose.** The Batches API is implemented and halves the cost, but
+the runner submits two batches per condition and polls each to completion. Measured here: a single
+50-request batch took ~34 minutes, and even a 3-request batch ran past 12 — batch latency has a
+floor unrelated to batch size. The same work ran sequentially in ~8 minutes. Prefer `--no-batch`
+unless cost strictly dominates wall-clock.
 
 ## Reproducibility
 

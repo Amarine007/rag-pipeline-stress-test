@@ -342,6 +342,12 @@ def main() -> int:
         log_x=False,
     )
     strategy = strategy_figure()
+    distractor_k1 = sweep_figure(
+        "distractor_sensitivity_k1.csv",
+        "distractor ratio (distractors per relevant document)",
+        "Distractor sensitivity at k = 1",
+        "distractor_sensitivity_k1.png",
+    )
     distractor = sweep_figure(
         "distractor_sensitivity.csv",
         "distractor ratio (distractors per relevant document)",
@@ -355,6 +361,7 @@ def main() -> int:
             ("Chunk-size sensitivity", chunk, SWEEP_COLUMNS),
             ("Chunking strategy", strategy, SWEEP_COLUMNS),
             ("Distractor sensitivity", distractor, SWEEP_COLUMNS),
+            ("Distractor sensitivity at k=1", distractor_k1, SWEEP_COLUMNS),
             (
                 "Long-context vs. retrieval",
                 long_context,
