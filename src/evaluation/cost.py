@@ -116,4 +116,8 @@ def format_cost_report(
             lines.append(
                 f"                 ${projected.usd * BATCH_DISCOUNT:.2f} if run with --batch"
             )
+        lines.append(
+            "                 (upper bound: conditions that retrieve identical "
+            "context share cache entries)"
+        )
     return "\n".join(lines)

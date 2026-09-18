@@ -11,7 +11,13 @@ from __future__ import annotations
 import pytest
 
 from src.config import CorpusConfig
-from src.ingestion.synthetic import _all_names, generate_corpus, subsample_questions
+from src.ingestion.synthetic import (
+    _ATTRIBUTES,
+    _all_names,
+    _validate_value_pools,
+    generate_corpus,
+    subsample_questions,
+)
 
 
 def test_same_seed_produces_identical_corpus():
@@ -211,3 +217,57 @@ def test_subsample_rejects_a_nonsense_limit():
     _, questions = generate_corpus(CorpusConfig(n_relevant_docs=8, seed=43))
     with pytest.raises(ValueError, match="at least 1"):
         subsample_questions(questions, 0)
+
+
+# -- answer uniqueness ----------------------------------------------------
+#
+# The distractor experiment asks whether a model reports a distractor's value
+# under pressure. That measurement only works if the gold answer appears in
+# exactly one document: otherwise a model reading the right number off the
+# wrong document scores correct, and "graceful degradation" and "got lucky"
+# become indistinguishable. Before the gold/filler split this failed for 100%
+# of questions.
+
+
+@pytest.mark.parametrize("ratio", [0.0, 1.0, 2.0, 4.0])
+def test_answer_appears_in_exactly_one_document(ratio):
+    docs, questions = generate_corpus(
+        CorpusConfig(n_relevant_docs=32, distractor_ratio=ratio, fact_sentences=3, seed=101)
+    )
+    for question in questions:
+        carriers = [d.doc_id for d in docs if question.answer in d.text]
+        assert carriers == [question.gold_doc_id], (
+            f"{question.question_id}: answer {question.answer!r} appears in {carriers}"
+        )
+
+
+def test_gold_and_filler_value_pools_are_disjoint():
+    for attr in _ATTRIBUTES:
+        assert set(attr.gold_values).isdisjoint(attr.filler_values)
+        assert attr.gold_values and attr.filler_values
+
+
+def test_no_value_is_a_substring_of_another():
+    """'20 milliseconds' inside '120 milliseconds' would fake a match."""
+    _validate_value_pools()  # raises on violation
+    for attr in _ATTRIBUTES:
+        for value in attr.values:
+            assert not any(value in other for other in attr.values if other != value)
+
+
+def test_gold_values_are_dealt_without_replacement():
+    _, questions = generate_corpus(
+        CorpusConfig(n_relevant_docs=40, fact_sentences=3, seed=103)
+    )
+    by_attribute = {}
+    for q in questions:
+        by_attribute.setdefault(q.gold_fact_id.split(":")[1], []).append(q.answer)
+    for attribute, answers in by_attribute.items():
+        assert len(set(answers)) == len(answers), f"{attribute} reused a gold value"
+
+
+def test_exhausting_gold_values_is_a_clear_error():
+    """Better a loud failure than a silently confounded corpus."""
+    smallest = min(len(a.gold_values) for a in _ATTRIBUTES)
+    with pytest.raises(ValueError, match="Ran out of unique gold values"):
+        generate_corpus(CorpusConfig(n_relevant_docs=smallest * len(_ATTRIBUTES) + 8))

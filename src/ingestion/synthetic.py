@@ -69,6 +69,40 @@ _CITIES = [
 ]
 
 
+# Value pools. Two invariants hold across every attribute, and both are checked
+# at import by `_validate_value_pools`:
+#
+# 1. **No value is a substring of another within an attribute.** Numeric values
+#    therefore all carry the same digit count -- "20 milliseconds" inside
+#    "120 milliseconds" would make an answer look present in a document that
+#    never stated it.
+# 2. **Pools are large enough to assign gold values without replacement.** Half
+#    of each pool is reserved for planted answers, and 40 values means 20 gold
+#    values per attribute, which supports up to 160 relevant documents.
+_HOURS = tuple(range(12, 92, 2))
+_MILLISECONDS = tuple(range(11, 91, 2))
+_DAYS = tuple(range(10, 90, 2))
+_TERABYTES = tuple(range(13, 93, 2))
+_DIMENSIONS = tuple(range(1024, 1024 + 40 * 76, 76))
+_CENTROIDS = tuple(range(1031, 1031 + 40 * 223, 223))
+
+_AUTH_METHODS = [
+    "hardware token authentication", "mutual TLS certificates",
+    "single sign-on through the corporate identity provider",
+    "short-lived signed URLs", "an approved bastion host",
+    "a break-glass ticket with two approvers", "a hardware-backed passkey",
+    "an attested device certificate",
+]
+_AUTH_SCOPES = [
+    "for every session", "for all write operations",
+    "when connecting from outside the corporate network",
+    "after ninety days of inactivity",
+    "for anyone outside the platform team",
+]
+_AUTH_VALUES = [f"{m} {s}" for m in _AUTH_METHODS for s in _AUTH_SCOPES]
+_MAINTAINER_VALUES = [f"the {t} in {c}" for t in _TEAMS for c in _CITIES]
+
+
 class _Attribute:
     """One queryable property: how to state it, and how to ask about it.
 
@@ -85,6 +119,20 @@ class _Attribute:
     binds it to a system, so neither is sufficient alone. That is what makes a
     chunk boundary falling between them a real failure rather than an artifact
     of every fact being one tidy sentence.
+
+    Values are partitioned into two disjoint halves: one that only ever appears
+    as a planted answer, one that only ever appears as filler. Without that
+    split the pools are small enough (and every document mentions nearly every
+    attribute) that a question's answer string reliably turns up in some other
+    document -- measured at 100% of questions, and present in the retrieved
+    context for 58% of them at the widest distractor ratio. A model reading the
+    right number off the wrong document would then score correct, which would
+    quietly destroy the distractor experiment's ability to tell a real retrieval
+    from a lucky one.
+
+    The split alternates rather than cutting the list in half, so gold and
+    filler values interleave and the two sets have no systematic difference in
+    magnitude for the retriever to key on.
     """
 
     def __init__(
@@ -99,6 +147,8 @@ class _Attribute:
     ):
         self.key = key
         self.values = values
+        self.filler_values = values[0::2]
+        self.gold_values = values[1::2]
         self.statement = statement  # formatted with {name} and {value}
         self.question = question  # formatted with {name}
         self.setup = setup  # formatted with {name}
@@ -136,7 +186,7 @@ class _Attribute:
 _ATTRIBUTES: list[_Attribute] = [
     _Attribute(
         "rebuild_cadence",
-        [f"every {n} hours" for n in (12, 18, 24, 36, 48, 72)],
+        [f"every {n} hours" for n in _HOURS],
         "{name} rebuilds its primary shard {value}.",
         "How often does {name} rebuild its primary shard?",
         setup="{name} maintains a primary shard that is rebuilt on a fixed schedule.",
@@ -145,7 +195,7 @@ _ATTRIBUTES: list[_Attribute] = [
     ),
     _Attribute(
         "latency_budget",
-        [f"{n} milliseconds" for n in (15, 25, 45, 60, 90, 120)],
+        [f"{n} milliseconds" for n in _MILLISECONDS],
         "Query latency on {name} is budgeted at {value} for the 99th percentile.",
         "What is the 99th-percentile query latency budget for {name}?",
         setup="{name} publishes a latency budget covering its 99th-percentile query path.",
@@ -154,7 +204,7 @@ _ATTRIBUTES: list[_Attribute] = [
     ),
     _Attribute(
         "vector_dim",
-        [f"{n} dimensions" for n in (128, 256, 384, 768, 1024, 1536)],
+        [f"{n} dimensions" for n in _DIMENSIONS],
         "{name} stores its vectors in {value}.",
         "How many dimensions does {name} use to store its vectors?",
         setup="{name} keeps one dense vector for every indexed record.",
@@ -163,7 +213,7 @@ _ATTRIBUTES: list[_Attribute] = [
     ),
     _Attribute(
         "centroids",
-        [f"{n} centroids" for n in (512, 1024, 2048, 4096, 8192)],
+        [f"{n} centroids" for n in _CENTROIDS],
         "Coarse quantization on {name} uses an inverted file index with {value}.",
         "How many centroids does {name} use for coarse quantization?",
         setup="Coarse quantization on {name} runs through an inverted file index.",
@@ -172,7 +222,7 @@ _ATTRIBUTES: list[_Attribute] = [
     ),
     _Attribute(
         "retention",
-        [f"{n} days" for n in (7, 30, 90, 180, 365)],
+        [f"{n} days" for n in _DAYS],
         "Deleted records on {name} are retained for {value} before purging.",
         "How long does {name} retain deleted records before purging them?",
         setup="{name} does not purge deleted records immediately.",
@@ -181,7 +231,7 @@ _ATTRIBUTES: list[_Attribute] = [
     ),
     _Attribute(
         "storage",
-        [f"{n} terabytes" for n in (3, 8, 14, 22, 40, 64)],
+        [f"{n} terabytes" for n in _TERABYTES],
         "A full rebuild of {name} consumes roughly {value} of scratch disk.",
         "How much scratch disk does a full rebuild of {name} consume?",
         setup="A full rebuild of {name} stages its intermediate output on scratch disk.",
@@ -190,12 +240,7 @@ _ATTRIBUTES: list[_Attribute] = [
     ),
     _Attribute(
         "auth",
-        [
-            "hardware token authentication",
-            "mutual TLS certificates",
-            "single sign-on through the corporate identity provider",
-            "short-lived signed URLs",
-        ],
+        _AUTH_VALUES,
         "Access to the {name} administrative console requires {value}.",
         "What does access to the {name} administrative console require?",
         setup="The {name} administrative console sits behind its own access control.",
@@ -204,7 +249,7 @@ _ATTRIBUTES: list[_Attribute] = [
     ),
     _Attribute(
         "maintainer",
-        [],  # filled per-document from _TEAMS x _CITIES
+        _MAINTAINER_VALUES,
         "{name} is maintained by {value}.",
         "Who maintains {name}?",
         setup="{name} has a single owning team rather than shared stewardship.",
@@ -220,10 +265,28 @@ def _all_names() -> list[str]:
     return [f"{p} {s}" for p in _NAME_PREFIXES for s in _NAME_SUFFIXES]
 
 
+def _validate_value_pools() -> None:
+    """Check the two pool invariants at import rather than trusting them.
+
+    Both are easy to break by editing a value list and impossible to notice from
+    the corpus by eye, and either one silently corrupts the distractor results.
+    """
+    for attr in _ATTRIBUTES:
+        for value in attr.values:
+            others = [v for v in attr.values if v != value]
+            if any(value in other for other in others):
+                raise ValueError(
+                    f"Value {value!r} of attribute {attr.key!r} is a substring of another "
+                    "value in the same pool. An answer would then appear present in a "
+                    "document that never stated it. Numeric pools must share a digit count."
+                )
+        if len(set(attr.values)) != len(attr.values):
+            raise ValueError(f"Attribute {attr.key!r} has duplicate values.")
+
+
 def _value_for(attr: _Attribute, rng: random.Random) -> str:
-    if attr.key == "maintainer":
-        return f"the {rng.choice(_TEAMS)} in {rng.choice(_CITIES)}"
-    return rng.choice(attr.values)
+    """Pick a filler value. Filler never draws from the gold half."""
+    return rng.choice(attr.filler_values)
 
 
 def _build_document(
@@ -234,6 +297,7 @@ def _build_document(
     rng: random.Random,
     is_distractor: bool,
     fact_sentences: int = 1,
+    gold_value: str | None = None,
 ) -> tuple[Document, str | None]:
     """Assemble one document; return it plus the answer value of its planted fact.
 
@@ -266,7 +330,10 @@ def _build_document(
 
     def build_fact_block(key: str, record_as: str | None) -> tuple[Block, str]:
         attr = _ATTRS_BY_KEY[key]
-        value = _value_for(attr, rng)
+        # A real planted fact uses the gold value the caller reserved for it.
+        # A distractor's decoy is filler wearing a fact's shape, so it draws
+        # from the filler half and can never carry a correct answer.
+        value = gold_value if record_as is not None else _value_for(attr, rng)
         sentences, value_index = attr.sentences(name, value, fact_sentences)
         text = " ".join(sentences)
         offset = sum(len(s) + 1 for s in sentences[:value_index])
@@ -349,6 +416,17 @@ def generate_corpus(config: CorpusConfig) -> tuple[list[Document], list[EvalQues
             "Reduce n_relevant_docs or distractor_ratio, or extend the name pools."
         )
 
+    # Gold values are dealt without replacement per attribute, so no two
+    # planted answers for the same attribute are ever the same string. Combined
+    # with the gold/filler split, this makes a question's answer appear in
+    # exactly one document in the whole corpus -- which is what lets a correct
+    # answer be read as evidence of retrieval rather than of a lucky match.
+    gold_pools: dict[str, list[str]] = {}
+    for attr in _ATTRIBUTES:
+        pool = list(attr.gold_values)
+        rng.shuffle(pool)
+        gold_pools[attr.key] = pool
+
     documents: list[Document] = []
     questions: list[EvalQuestion] = []
 
@@ -358,6 +436,16 @@ def generate_corpus(config: CorpusConfig) -> tuple[list[Document], list[EvalQues
         name = names[i]
         queried_key = _ATTRIBUTES[i % len(_ATTRIBUTES)].key
         doc_id = f"doc-{i:04d}"
+        pool = gold_pools[queried_key]
+        if not pool:
+            raise ValueError(
+                f"Ran out of unique gold values for attribute {queried_key!r} at "
+                f"n_relevant_docs={config.n_relevant_docs}. Each attribute holds "
+                f"{len(_ATTRS_BY_KEY[queried_key].gold_values)} gold values and they are "
+                "dealt without replacement; extend that attribute's value pool to go "
+                "higher. Reusing one would let a correct answer come from the wrong "
+                "document."
+            )
         doc, answer = _build_document(
             doc_id,
             name,
@@ -366,6 +454,7 @@ def generate_corpus(config: CorpusConfig) -> tuple[list[Document], list[EvalQues
             rng,
             is_distractor=False,
             fact_sentences=config.fact_sentences,
+            gold_value=pool.pop(),
         )
         documents.append(doc)
         questions.append(
@@ -422,3 +511,6 @@ def subsample_questions(
     if max_questions < 1:
         raise ValueError(f"max_questions must be at least 1; got {max_questions}.")
     return questions[:max_questions]
+
+
+_validate_value_pools()
