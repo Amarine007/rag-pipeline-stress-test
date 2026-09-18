@@ -9,7 +9,7 @@ reported as such rather than reframed — see §4.1, §5.1, and Limitations 7–
 
 ## 1. Motivation
 
-Retrieval-augmented generation is usually demonstrated rather than tested. A
+Retrieval-augmented generation [1] is usually demonstrated rather than tested. A
 typical demo shows a pipeline answering a question correctly and stops there,
 which establishes that the technique can work but says nothing about when it
 stops working, or which of its stages fails first.
@@ -43,21 +43,53 @@ harness that measures all three against one fixed corpus and one fixed question
 set, with retrieval and answer quality separated, and with exact ground truth
 rather than approximate string matching.
 
-- **Lost in the middle.** Liu et al. (2023) showed that language models retrieve
+- **Lost in the middle.** Liu et al. [2] showed that language models retrieve
   information most reliably from the start and end of a long context, with a
-  measurable dip in the middle. Experiment 3 replicates this probe on a current
-  model and contrasts it with retrieval on the same corpus.
-- **Distractor sensitivity and retrieval noise.** Work on noisy retrieval (e.g.
-  Cuconasu et al., 2024, on the role of irrelevant and distracting passages)
-  reports that irrelevant context can degrade generation quality, and that
-  *near-miss* distractors are more damaging than random ones. Experiment 2 uses
-  distractors generated from the same templates as the gold documents, which is
-  the near-miss case by construction.
+  measurable dip in the middle. Experiment 3 attempts this probe on a current
+  model and contrasts it with retrieval on the same corpus. It does not
+  reproduce the effect, and §5.1 argues that this is a ceiling effect in the
+  probe rather than evidence against [2] — the contexts tested here are roughly
+  an order of magnitude shorter, relative to model capacity, than those in which
+  the effect was originally characterized.
+- **Distractor sensitivity and retrieval noise.** Cuconasu et al. [3] report
+  that irrelevant context degrades generation quality, and — counter-intuitively
+  — that *near-miss* distractors semantically close to the gold passage are more
+  damaging than unrelated ones. Experiment 2 uses distractors generated from the
+  same templates as the gold documents, which is the near-miss case by
+  construction. It does not reproduce a significant degradation either; §4.1
+  sets out the three respects in which this setup is easier than [3]'s.
 - **Chunking.** Chunk size is widely treated as a tuning parameter in practice
   but is less often measured as an independent variable with retrieval and
-  answer quality reported apart. Experiment 1 does so.
+  answer quality reported apart. Experiment 1 does so, and finds a
+  non-monotonic relationship that a coarse sweep would miss.
 
-*(Citations to be completed with full references before submission.)*
+Two of the three experiments here therefore fail to reproduce effects that are
+well established in the literature. The claim is not that those effects are
+absent in general, but that this configuration — a current frontier model, a
+small clean corpus, and lookup-style questions — does not exhibit them, and
+§§4.1 and 5.1 identify what would need to change to test them properly.
+
+### 1.2 References
+
+[1] Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N.,
+Küttler, H., Lewis, M., Yih, W., Rocktäschel, T., Riedel, S., & Kiela, D.
+(2020). *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks.*
+Advances in Neural Information Processing Systems 33. arXiv:2005.11401.
+
+[2] Liu, N. F., Lin, K., Hewitt, J., Paranjape, A., Bevilacqua, M., Petroni, F.,
+& Liang, P. (2023). *Lost in the Middle: How Language Models Use Long Contexts.*
+Transactions of the Association for Computational Linguistics, 12.
+arXiv:2307.03172.
+
+[3] Cuconasu, F., Trappolini, G., Siciliano, F., Filice, S., Campagnano, C.,
+Maarek, Y., Tonellotto, N., & Silvestri, F. (2024). *The Power of Noise:
+Redefining Retrieval for RAG Systems.* Proceedings of the 47th International
+ACM SIGIR Conference on Research and Development in Information Retrieval.
+arXiv:2401.14887.
+
+[4] Wilson, E. B. (1927). *Probable Inference, the Law of Succession, and
+Statistical Inference.* Journal of the American Statistical Association, 22(158),
+209–212. — the interval used for every proportion reported here.
 
 ---
 
@@ -248,7 +280,7 @@ below hit rate at 400-character chunks.)*
 ### 3.1 Results
 
 n = 80 questions per condition. Bracketed figures are 95% Wilson score
-intervals; Wilson rather than the normal approximation because several
+intervals [4]; Wilson rather than the normal approximation because several
 conditions sit at exactly 0.0 or 1.0, where the normal interval degenerates to
 zero width and would claim certainty from a finite sample.
 
@@ -422,7 +454,8 @@ Rank degrades long before retrieval fails. A pipeline reporting only hit rate@k
 at a generous k would see a flat line here and conclude it was robust to
 distractors; the same pipeline at k = 1 would already be losing answers. MRR is
 the leading indicator, and this is the clearest argument in the paper for
-reporting several retrieval metrics rather than one.
+reporting several retrieval metrics rather than one. §4.2 tests this reading
+directly by re-running the sweep at k = 1, and confirms it.
 
 **Failures are a property of the question, not of the noise.** The set of
 questions answered incorrectly is strictly nested as noise rises: {} at 0x
@@ -436,6 +469,53 @@ uniformly across the eval set. Mean accuracy therefore understates how sharply
 the population splits: most questions are completely unaffected, and a few fail
 as soon as enough noise exists to displace them.
 
+### 4.2 The same sweep at k = 1
+
+The k = 5 result above is dominated by headroom: with roughly one gold chunk per
+question and five retrieval slots, four slots are spare, and the falling MRR
+shows ranking pressure being absorbed rather than expressed. Re-running the
+identical sweep at k = 1 removes that slack. Nothing else changes — same corpus,
+same seed, same questions, same chunking; only `retrieval.k`.
+
+| ratio | hit@1 [95% CI] | accuracy [95% CI] | abstention | hallucination | (hit@5) | (acc @ k=5) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0x | 0.875 [0.785, 0.931] | 0.912 [0.830, 0.957] | 0.087 | 0.000 | 1.000 | 1.000 |
+| 0.5x | 0.850 [0.756, 0.912] | 0.887 [0.800, 0.940] | 0.113 | 0.000 | 1.000 | 1.000 |
+| 1x | 0.825 [0.727, 0.893] | 0.850 [0.756, 0.912] | 0.150 | 0.000 | 1.000 | 1.000 |
+| 2x | 0.800 [0.700, 0.873] | 0.825 [0.727, 0.893] | 0.175 | 0.000 | 0.988 | 0.988 |
+| 3x | 0.775 [0.672, 0.853] | 0.800 [0.700, 0.873] | 0.200 | 0.000 | 0.938 | 0.938 |
+| 4x | 0.775 [0.672, 0.853] | 0.800 [0.700, 0.873] | 0.200 | 0.000 | 0.938 | 0.938 |
+
+**Removing the headroom roughly doubles the damage, and makes it monotonic.**
+Accuracy falls 11.2 points from 0x to 4x at k = 1, against 6.2 points at k = 5,
+and it falls at *every* step rather than staying pinned at 1.000 through 1x.
+This is the direct confirmation of the k = 5 interpretation: the ranking
+pressure that MRR was measuring all along was real, and it was the spare slots,
+not the retriever's robustness, that kept it away from the generator.
+
+The pairwise 0x-versus-4x intervals still overlap at n = 80, so no single
+comparison here is individually significant. The evidence is the shape rather
+than any one gap: six conditions falling monotonically in accuracy
+(0.912, 0.887, 0.850, 0.825, 0.800, 0.800) and in hit rate alongside it, in the
+pre-registered direction, is considerably stronger than the flat line at k = 5.
+
+Two further observations:
+
+- **Even with no distractors at all, hit@1 is only 0.875.** An eighth of
+  questions do not rank their gold chunk first in a corpus containing nothing
+  but gold documents and their own filler. This is a floor set by the embedder,
+  not by the distractors, and it is invisible at k = 5 where hit rate is a flat
+  1.000. Some of what looks like distractor damage at k = 1 is really this
+  baseline made visible.
+- **Hallucination is exactly 0.000 in all six conditions here too.** Across both
+  sweeps that is twelve conditions and 960 questions with not one fabricated
+  answer, including the conditions where the single retrieved chunk is a
+  near-miss distractor from a different system with the same template and a
+  plausible-looking value. When this pipeline fails, it says so. That is now the
+  best-supported claim in the paper, and it is supported precisely because
+  §2.2's uniqueness invariant makes a lucky right answer from a wrong document
+  impossible to score as correct.
+
 **What this does and does not license.** The honest reading is that this
 configuration is robust to this kind of distractor at these ratios, not that RAG
 is robust to distractors. Three specific reasons for caution: k = 5 with roughly
@@ -447,8 +527,11 @@ in exactly one document, so a model reading a value off the wrong document is
 always scored wrong. That invariant is what makes the zero hallucination rate
 meaningful — before it was enforced, the answer string appeared in some other
 document for every question, and a model could have scored correct by luck.
-Testing at k = 1, or with distractors that reuse system names, would very likely
-find the failure modes this experiment did not.
+
+The first of those three was tested directly and is confirmed in §4.2: at k = 1
+the degradation roughly doubles and becomes monotonic. The other two remain
+untested. Distractors that reuse system names, in particular, would attack the
+retriever's main handle on the task and are the obvious next experiment.
 
 ---
 
@@ -502,7 +585,7 @@ evidence that lost-in-the-middle does not exist.
 Three reasons the probe had no headroom, all of which are fixable:
 
 1. **The context is short by current standards.** 26k tokens is a small
-   fraction of this model's window. Liu et al.'s effect was characterized on
+   fraction of this model's window. The effect in [2] was characterized on
    models and context lengths where 26k was a substantial fraction of capacity;
    reproducing it now plausibly requires a context one or two orders of
    magnitude larger, not a corpus of 100 short documents.

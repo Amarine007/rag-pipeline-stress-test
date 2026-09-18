@@ -1,0 +1,73 @@
+# Experiment 2b -- Distractor sensitivity at k=1.
+#
+# Identical to distractor_sensitivity.yaml in every respect but `retrieval.k`,
+# which is 1 rather than 5. A separate file rather than an override so that the
+# k=5 run's config stays exactly as it was recorded.
+#
+# Why this exists. The k=5 run was a negative result: accuracy tracked hit
+# rate@5 to three decimals, hallucination was 0.000 everywhere, and quadrupling
+# the corpus cost only 6 points of accuracy. But MRR fell steadily over the same
+# sweep (0.933 -> 0.846), which says distractors *were* pushing the gold chunk
+# down the ranking the whole time -- k=5 simply had four spare slots to absorb
+# it, so the pressure never reached the generator.
+#
+# k=1 removes that headroom. The rank degradation MRR already measured should
+# now convert directly into retrieval failures, and the generation-side question
+# the k=5 run could not reach becomes askable: when the single retrieved chunk
+# is a near-miss distractor rather than the gold chunk, does the model abstain
+# or does it report the wrong system's value? That is the distinction between
+# graceful and dangerous degradation, and it is what the hallucination rate is
+# for.
+#
+# This condition is also far cheaper than k=5 -- one chunk of context per
+# question instead of five.
+
+name: distractor_sensitivity_k1
+description: >
+  Distractor sensitivity with k=1, removing the retrieval headroom that made
+  the k=5 sweep insensitive to ranking pressure.
+seed: 20260917
+
+corpus:
+  n_relevant_docs: 80
+  distractor_ratio: 0.0
+  filler_sentences_per_doc: 6
+  fact_sentences: 3          # facts span setup/value/elaboration, not one tidy sentence
+  seed: 20260917
+
+chunking:
+  strategy: recursive        # boundary-aware, so chunking is not a confound here
+  chunk_size: 400
+  chunk_overlap: 50
+
+embedding:
+  model_name: all-MiniLM-L6-v2
+  batch_size: 64
+  normalize: true
+
+retrieval:
+  k: 1
+  index_type: flat
+
+generation:
+  model: claude-opus-5
+  max_tokens: 1024
+  effort: low
+  use_cache: true
+  # Sequential, not batched. Batching halves cost, but the implementation
+  # submits two batches per condition and polls each to completion, so a sweep
+  # means dozens of serialized round-trips with unpredictable wall-clock. The
+  # few dollars saved are not worth the uncertainty; `--batch` still overrides.
+  use_batch: false
+
+judge:
+  model: claude-opus-5
+  max_tokens: 512
+  effort: low
+  use_cache: true
+
+sweep:
+  # 0x through 4x the relevant corpus: 80 relevant documents against up to 320
+  # distractors, for 400 documents at the widest ratio. The name pool holds
+  # 56 x 20 = 1120 unique system names, so this fits with room to spare.
+  corpus.distractor_ratio: [0.0, 0.5, 1.0, 2.0, 3.0, 4.0]
