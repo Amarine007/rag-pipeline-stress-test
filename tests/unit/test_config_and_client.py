@@ -12,7 +12,7 @@ import json
 import pytest
 
 from src.config import ExperimentConfig, apply_override, load_config
-from src.generation.claude_client import ClaudeClient, model_accepts_sampling
+from src.generation.claude_client import BatchRequest, ClaudeClient, model_accepts_sampling
 
 # -- config ---------------------------------------------------------------
 
@@ -160,3 +160,150 @@ def test_cache_stats_counts_entries(tmp_path):
     client._write_cache("a", {"text": "x"})
     client._write_cache("b", {"text": "y"})
     assert client.cache_stats()["entries"] == 2
+
+
+# -- batch transport ------------------------------------------------------
+#
+# The Batches API halves the cost of the experiment grid. These tests pin the
+# two properties that make it safe to use: transport must not change results,
+# and a partial batch must be loud rather than quietly shrinking n.
+
+
+class _FakeUsage:
+    def __init__(self, input_tokens=10, output_tokens=5):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+class _FakeTextBlock:
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class _FakeMessage:
+    def __init__(self, text, model="claude-opus-5", stop_reason="end_turn"):
+        self.content = [_FakeTextBlock(text)]
+        self.model = model
+        self.stop_reason = stop_reason
+        self.usage = _FakeUsage()
+
+
+class _FakeResult:
+    def __init__(self, custom_id, text=None, result_type="succeeded"):
+        self.custom_id = custom_id
+        self.result = type(
+            "R", (), {"type": result_type, "message": _FakeMessage(text or "")}
+        )()
+
+
+class _FakeBatches:
+    """Stands in for client.messages.batches, returning results out of order."""
+
+    def __init__(self, replies: dict, result_type="succeeded", drop=()):
+        self.replies = replies
+        self.result_type = result_type
+        self.drop = set(drop)
+        self.submitted = None
+
+    def create(self, requests):
+        self.submitted = requests
+        return type("B", (), {"id": "batch_test", "processing_status": "in_progress"})()
+
+    def retrieve(self, batch_id):
+        return type("B", (), {"id": batch_id, "processing_status": "ended"})()
+
+    def results(self, batch_id):
+        # Reversed: batch results arrive in arbitrary order, and keying by
+        # position instead of custom_id would silently mismatch answers to
+        # questions.
+        for custom_id in reversed(list(self.replies)):
+            if custom_id in self.drop:
+                continue
+            yield _FakeResult(custom_id, self.replies[custom_id], self.result_type)
+
+
+def _client_with_batches(tmp_path, batches):
+    client = ClaudeClient(cache_dir=tmp_path, use_cache=True, use_batch=True)
+    client._client = type("C", (), {"messages": type("M", (), {"batches": batches})()})()
+    return client
+
+
+def _request(custom_id, prompt):
+    return BatchRequest(custom_id=custom_id, prompt=prompt, system="sys")
+
+
+def test_batch_results_are_keyed_by_custom_id_not_order(tmp_path):
+    batches = _FakeBatches({"a": "answer A", "b": "answer B", "c": "answer C"})
+    client = _client_with_batches(tmp_path, batches)
+
+    out = client.complete_batch(
+        [_request("a", "q1"), _request("b", "q2"), _request("c", "q3")],
+        show_progress=False,
+    )
+    assert out["a"].text == "answer A"
+    assert out["b"].text == "answer B"
+    assert out["c"].text == "answer C"
+
+
+def test_batch_sends_only_cache_misses(tmp_path):
+    batches = _FakeBatches({"b": "fresh"})
+    client = _client_with_batches(tmp_path, batches)
+
+    # Pre-seed the cache for request "a" using the same key the client builds.
+    key = ClaudeClient._cache_key(
+        ClaudeClient._build_request("q1", "sys", "claude-opus-5", 1024, "low", None)
+    )
+    (tmp_path / f"{key}.json").write_text(
+        json.dumps({"text": "cached", "model": "claude-opus-5", "stop_reason": "end_turn"}),
+        encoding="utf-8",
+    )
+
+    out = client.complete_batch(
+        [_request("a", "q1"), _request("b", "q2")], show_progress=False
+    )
+    assert out["a"].cached and out["a"].text == "cached"
+    assert not out["b"].cached and out["b"].text == "fresh"
+    # Only the miss was submitted.
+    assert [r["custom_id"] for r in batches.submitted] == ["b"]
+
+
+def test_fully_cached_batch_never_calls_the_api(tmp_path):
+    client = ClaudeClient(cache_dir=tmp_path, use_cache=True, use_batch=True)
+    # No fake client installed: touching .client would raise for a missing key.
+    key = ClaudeClient._cache_key(
+        ClaudeClient._build_request("q1", "sys", "claude-opus-5", 1024, "low", None)
+    )
+    (tmp_path / f"{key}.json").write_text(
+        json.dumps({"text": "cached", "model": "claude-opus-5", "stop_reason": "end_turn"}),
+        encoding="utf-8",
+    )
+    out = client.complete_batch([_request("a", "q1")], show_progress=False)
+    assert out["a"].cached
+
+
+def test_batch_writes_results_to_the_shared_cache(tmp_path):
+    batches = _FakeBatches({"a": "fresh answer"})
+    client = _client_with_batches(tmp_path, batches)
+    client.complete_batch([_request("a", "q1")], show_progress=False)
+
+    # A later sequential call for the same request must hit that cache entry --
+    # transport does not enter the cache key.
+    sequential = ClaudeClient(cache_dir=tmp_path, use_cache=True, use_batch=False)
+    response = sequential.complete(prompt="q1", system="sys")
+    assert response.cached and response.text == "fresh answer"
+
+
+def test_missing_batch_response_raises_rather_than_shrinking_n(tmp_path):
+    batches = _FakeBatches({"a": "ok", "b": "ok"}, drop={"b"})
+    client = _client_with_batches(tmp_path, batches)
+    with pytest.raises(RuntimeError, match="did not return every response"):
+        client.complete_batch([_request("a", "q1"), _request("b", "q2")], show_progress=False)
+
+
+def test_errored_batch_entry_raises(tmp_path):
+    batches = _FakeBatches({"a": "ok"}, result_type="errored")
+    client = _client_with_batches(tmp_path, batches)
+    with pytest.raises(RuntimeError, match="Failed"):
+        client.complete_batch([_request("a", "q1")], show_progress=False)

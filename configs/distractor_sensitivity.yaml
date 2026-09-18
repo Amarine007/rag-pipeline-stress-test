@@ -46,6 +46,7 @@ generation:
   max_tokens: 1024
   effort: low
   use_cache: true
+  use_batch: true            # Batches API: half price, async -- the grid is not latency-sensitive
 
 judge:
   model: claude-opus-5

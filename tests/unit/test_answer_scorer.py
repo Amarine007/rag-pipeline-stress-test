@@ -107,3 +107,67 @@ def test_aggregate_separates_the_three_outcomes():
 
 def test_aggregate_of_nothing_is_zero_not_a_crash():
     assert aggregate_answers([])["n"] == 0
+
+
+# -- batched judging ------------------------------------------------------
+
+
+class _RecordingBatchClient:
+    """A ClaudeClient stand-in that records what it was asked to judge."""
+
+    use_batch = True
+
+    def __init__(self, verdicts: dict):
+        self.verdicts = verdicts
+        self.seen: list[str] = []
+
+    def complete_batch(self, requests, show_progress=True):
+        self.seen = [r.custom_id for r in requests]
+        return {
+            r.custom_id: LLMResponse(
+                text=self.verdicts[r.custom_id], model="claude-opus-5", cached=False
+            )
+            for r in requests
+        }
+
+
+def test_score_many_batches_and_keeps_order():
+    client = _RecordingBatchClient({"judge-q1": "CORRECT", "judge-q2": "INCORRECT"})
+    judge = LLMJudge(client)
+
+    scores = judge.score_many(
+        [
+            ("q1", "How often?", "every 36 hours", "every 36 hours"),
+            ("q2", "How many?", "512 centroids", "1024 centroids"),
+        ],
+        show_progress=False,
+    )
+    assert [s.question_id for s in scores] == ["q1", "q2"]
+    assert scores[0].correct and not scores[1].correct
+
+
+def test_score_many_never_sends_abstentions_to_the_judge():
+    """An abstention is graded locally; paying to judge it would be waste."""
+    client = _RecordingBatchClient({"judge-q2": "CORRECT"})
+    judge = LLMJudge(client)
+
+    scores = judge.score_many(
+        [
+            ("q1", "How often?", ABSTAIN_TOKEN, "every 36 hours"),
+            ("q2", "How many?", "1024 centroids", "1024 centroids"),
+        ],
+        show_progress=False,
+    )
+    assert client.seen == ["judge-q2"]
+    assert scores[0].abstained and not scores[0].correct
+    assert scores[1].correct
+
+
+def test_all_abstentions_skips_the_api_entirely():
+    client = _RecordingBatchClient({})
+    judge = LLMJudge(client)
+    scores = judge.score_many(
+        [("q1", "How often?", ABSTAIN_TOKEN, "every 36 hours")], show_progress=False
+    )
+    assert client.seen == []
+    assert scores[0].abstained

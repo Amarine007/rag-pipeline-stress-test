@@ -25,7 +25,7 @@ from src.evaluation.metrics import (
     aggregate_retrieval,
     score_retrieval,
 )
-from src.generation.claude_client import ClaudeClient
+from src.generation.claude_client import BatchRequest, ClaudeClient
 from src.generation.prompts import (
     ANSWER_SYSTEM,
     build_answer_prompt,
@@ -63,7 +63,10 @@ class RAGPipeline:
         embedder: Embedder | None = None,
     ):
         self.config = config
-        self.client = client or ClaudeClient(use_cache=config.generation.use_cache)
+        self.client = client or ClaudeClient(
+            use_cache=config.generation.use_cache,
+            use_batch=config.generation.use_batch,
+        )
         self.embedder = embedder or Embedder(config.embedding)
         self.judge = LLMJudge(self.client, config.judge)
 
@@ -134,6 +137,45 @@ class RAGPipeline:
         """The stuffed condition: no retrieval, the whole corpus in the prompt."""
         return self.generate(question, format_documents(documents))
 
+    def answer_request(self, custom_id: str, question: str, context: str) -> BatchRequest:
+        """One answer-generation call, as a batchable request."""
+        return BatchRequest(
+            custom_id=custom_id,
+            prompt=build_answer_prompt(question, context),
+            system=ANSWER_SYSTEM,
+            model=self.config.generation.model,
+            max_tokens=self.config.generation.max_tokens,
+            effort=self.config.generation.effort,
+            temperature=self.config.generation.temperature,
+        )
+
+    def _generate_answers(
+        self,
+        questions: list[EvalQuestion],
+        hits_by_question: dict,
+        show_progress: bool = False,
+    ) -> dict[str, str]:
+        """Generate every answer, batching when the client allows."""
+        contexts = {
+            q.question_id: format_chunks([h.chunk for h in hits_by_question[q.question_id]])
+            for q in questions
+        }
+
+        if not self.client.use_batch:
+            return {
+                q.question_id: self.generate(q.question, contexts[q.question_id])
+                for q in questions
+            }
+
+        responses = self.client.complete_batch(
+            [
+                self.answer_request(f"answer-{q.question_id}", q.question, contexts[q.question_id])
+                for q in questions
+            ],
+            show_progress=show_progress,
+        )
+        return {q.question_id: responses[f"answer-{q.question_id}"].text for q in questions}
+
     # -- evaluation ------------------------------------------------------
 
     def evaluate(
@@ -150,24 +192,41 @@ class RAGPipeline:
         documents_by_id = {d.doc_id: d for d in self.documents}
 
         started = time.time()
-        retrieval_results: list[QuestionRetrievalResult] = []
-        answer_scores: list[AnswerScore] = []
-        per_question: list[dict] = []
 
+        # Three phases rather than one loop per question. Retrieval is local and
+        # cheap; generation and judging are the API calls, and grouping each into
+        # one pass is what lets them go through the Batches API at half price.
+        # Sequentially the phases produce identical results -- only the order of
+        # the calls changes, and the cache key does not depend on transport.
+        retrieval_results: list[QuestionRetrievalResult] = []
+        hits_by_question = {}
         for i, question in enumerate(eval_questions, start=1):
             if show_progress:
-                print(f"  [{i}/{len(eval_questions)}] {question.question_id}", flush=True)
-
+                print(f"  [{i}/{len(eval_questions)}] retrieving {question.question_id}", flush=True)
             hits = self.retrieve(question.question)
-            retrieval = score_retrieval(question, hits, self.chunks, documents_by_id)
-            retrieval_results.append(retrieval)
-
-            prediction = self.generate(question.question, format_chunks([h.chunk for h in hits]))
-            score = self.judge.score(
-                question.question_id, question.question, prediction, question.answer
+            hits_by_question[question.question_id] = hits
+            retrieval_results.append(
+                score_retrieval(question, hits, self.chunks, documents_by_id)
             )
-            answer_scores.append(score)
 
+        predictions = self._generate_answers(
+            eval_questions, hits_by_question, show_progress=show_progress
+        )
+
+        answer_scores: list[AnswerScore] = self.judge.score_many(
+            [
+                (q.question_id, q.question, predictions[q.question_id], q.answer)
+                for q in eval_questions
+            ],
+            show_progress=show_progress,
+        )
+
+        per_question: list[dict] = []
+        for question, retrieval, score in zip(
+            eval_questions, retrieval_results, answer_scores
+        ):
+            hits = hits_by_question[question.question_id]
+            prediction = predictions[question.question_id]
             per_question.append(
                 {
                     "question_id": question.question_id,

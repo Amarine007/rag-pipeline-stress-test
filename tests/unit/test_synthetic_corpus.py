@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from src.config import CorpusConfig
-from src.ingestion.synthetic import generate_corpus, subsample_questions
+from src.ingestion.synthetic import _all_names, generate_corpus, subsample_questions
 
 
 def test_same_seed_produces_identical_corpus():
@@ -98,8 +98,23 @@ def test_questions_are_balanced_across_attribute_types():
 
 
 def test_exhausting_the_name_pool_is_a_clear_error():
+    # Sized from the pool rather than hardcoded, so growing the pools does not
+    # silently turn this into a test that exercises nothing.
+    too_many = len(_all_names()) + 1
     with pytest.raises(ValueError, match="unique system names"):
-        generate_corpus(CorpusConfig(n_relevant_docs=500, distractor_ratio=1.0))
+        generate_corpus(CorpusConfig(n_relevant_docs=too_many, distractor_ratio=0.0))
+
+
+def test_name_pool_covers_the_widest_planned_experiment():
+    """The distractor sweep at ratio 4.0 needs five unique names per question.
+
+    This is the constraint that couples sample size to the distractor
+    experiment: raising n_relevant_docs without checking it fails the run at the
+    widest ratio only, several conditions into a sweep that has already spent money.
+    """
+    widest_ratio = 4.0
+    questions = 120
+    assert len(_all_names()) >= questions * (1 + widest_ratio)
 
 
 # -- Multi-sentence facts ------------------------------------------------

@@ -363,5 +363,14 @@ against a fresh API key. Pilot output is written to `*-pilotN` files so it
 cannot overwrite a full run, and `n` travels with every metric block, so a
 reduced run is identifiable from its results alone.
 
+Generation and judging go through the Message Batches API by default
+(`generation.use_batch`), which halves the cost: the grid is a few hundred
+independent calls and none of it is latency-sensitive. The trade is that a
+batch is asynchronous — usually well under an hour, with a 24-hour ceiling — so
+a pilot, where the point is to see the judge's output quickly, should pass
+`--no-batch`. Transport does not enter the response cache's key, so batched and
+sequential runs are interchangeable and share cached responses; re-running an
+experiment submits nothing and costs nothing.
+
 Per-condition aggregates land in `results/*.csv`; per-question detail, including
 every prediction and every judge verdict, lands in `results/logs/*.jsonl`.

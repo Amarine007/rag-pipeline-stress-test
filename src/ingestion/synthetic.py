@@ -33,14 +33,30 @@ from src.ingestion.documents import Document, EvalQuestion, FactSpan
 # Fictional system names, built as prefix x suffix so the pool is large and the
 # names are deliberately confusable -- "Halcyon Index" vs "Halcyon Vault" is a
 # realistic retrieval hazard.
+#
+# The pool is 56 x 20 = 1120 names. Size is a real constraint rather than
+# decoration: the corpus needs n_relevant_docs * (1 + distractor_ratio) unique
+# names, so the distractor experiment at ratio 4.0 needs five names per
+# question. At 1120 the eval set can reach 224 questions at the widest ratio,
+# which is what keeps the sample size and the distractor sweep from trading off
+# against each other.
 _NAME_PREFIXES = [
     "Halcyon", "Ashford", "Meridian", "Borealis", "Calyx", "Tessera", "Lodestar",
     "Vantage", "Quillon", "Sable", "Thornwood", "Ironvale", "Pellucid", "Marlow",
     "Cinderbrook", "Alderon", "Wraythe", "Solstice", "Kestrel", "Fenmark",
     "Orrery", "Blackthorn", "Glimmer", "Hollowmere", "Verdant", "Nightjar",
     "Cavalier", "Tidewater", "Umbral", "Larkspur", "Ravenspur", "Silvermoor",
+    "Windermere", "Carrowmore", "Ellesmere", "Thistledown", "Brackwater",
+    "Ferncliff", "Aldergrove", "Stonehaven", "Mirefield", "Coldharbour",
+    "Westmarch", "Gravenhurst", "Linderoth", "Ashgrove", "Duskwood", "Highmoor",
+    "Fairwater", "Oakhollow", "Brightwater", "Northwick", "Sedgemoor",
+    "Wrenfield", "Amberlyn", "Castellan",
 ]
-_NAME_SUFFIXES = ["Index", "Vault", "Ledger", "Array", "Registry", "Cascade", "Store", "Atlas"]
+_NAME_SUFFIXES = [
+    "Index", "Vault", "Ledger", "Array", "Registry", "Cascade", "Store", "Atlas",
+    "Repository", "Catalog", "Archive", "Lattice", "Manifold", "Corpus", "Table",
+    "Graph", "Shard", "Depot", "Directory", "Chronicle",
+]
 
 _TEAMS = [
     "Meridian Data Group", "Northfield Platform", "Blue Harbor Infrastructure",

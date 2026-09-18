@@ -95,7 +95,10 @@ def run_sweep(
 
     # Shared across conditions: one model load, one cache.
     embedder = Embedder(config.embedding)
-    client = ClaudeClient(use_cache=config.generation.use_cache)
+    client = ClaudeClient(
+        use_cache=config.generation.use_cache,
+        use_batch=config.generation.use_batch,
+    )
 
     # The eval set comes from the baseline corpus and never changes afterwards.
     _, baseline_questions = generate_corpus(config.corpus)

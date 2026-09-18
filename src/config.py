@@ -94,6 +94,16 @@ class GenerationConfig:
     """Content-addressed disk cache. This, not temperature, is what makes runs
     reproducible."""
 
+    use_batch: bool = False
+    """Send calls through the Message Batches API at half price.
+
+    An experiment grid is a few hundred independent calls and nothing about it
+    is latency-sensitive, so this is close to free money -- the trade is that a
+    batch is not interactive (typically under an hour, up to 24). Transport does
+    not enter the cache key, so batched and sequential runs are interchangeable
+    and share cached responses. Defaults to off so that a pilot stays
+    interactive; the full grid should turn it on."""
+
 
 @dataclass(frozen=True)
 class JudgeConfig:

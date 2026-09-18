@@ -22,7 +22,7 @@ import re
 from dataclasses import dataclass
 
 from src.config import JudgeConfig
-from src.generation.claude_client import ClaudeClient
+from src.generation.claude_client import BatchRequest, ClaudeClient, LLMResponse
 from src.generation.prompts import ABSTAIN_TOKEN, JUDGE_SYSTEM, build_judge_prompt
 
 
@@ -75,22 +75,25 @@ class LLMJudge:
         self.client = client
         self.config = config or JudgeConfig()
 
-    def score(
-        self, question_id: str, question: str, prediction: str, reference: str
-    ) -> AnswerScore:
-        # An abstention is graded without spending a judge call: the model has
-        # already told us it found nothing, and there is nothing to compare.
-        if is_abstention(prediction):
-            return AnswerScore(
-                question_id=question_id,
-                correct=False,
-                abstained=True,
-                prediction=prediction,
-                reference=reference,
-                judge_raw="abstained",
-            )
+    @staticmethod
+    def _abstention_score(question_id: str, prediction: str, reference: str) -> AnswerScore:
+        """Grade an abstention without spending a judge call: the model has
+        already told us it found nothing, and there is nothing to compare."""
+        return AnswerScore(
+            question_id=question_id,
+            correct=False,
+            abstained=True,
+            prediction=prediction,
+            reference=reference,
+            judge_raw="abstained",
+        )
 
-        response = self.client.complete(
+    def request_for(
+        self, custom_id: str, question: str, prediction: str, reference: str
+    ) -> BatchRequest:
+        """The judge call for one answer, as a batchable request."""
+        return BatchRequest(
+            custom_id=custom_id,
             prompt=build_judge_prompt(question, reference, prediction),
             system=JUDGE_SYSTEM,
             model=self.config.model,
@@ -98,7 +101,12 @@ class LLMJudge:
             effort=self.config.effort,
         )
 
-        verdict = response.text.strip().upper()
+    @staticmethod
+    def parse_verdict(
+        question_id: str, verdict_text: str, prediction: str, reference: str
+    ) -> AnswerScore:
+        """Turn a judge's raw reply into a score."""
+        verdict = verdict_text.strip().upper()
         # Check INCORRECT first: "INCORRECT" contains "CORRECT" as a substring,
         # so testing for CORRECT first would grade every wrong answer as right.
         if verdict.startswith("INCORRECT") or "INCORRECT" in verdict:
@@ -116,8 +124,59 @@ class LLMJudge:
             abstained=False,
             prediction=prediction,
             reference=reference,
-            judge_raw=response.text.strip(),
+            judge_raw=verdict_text.strip(),
         )
+
+    def score(
+        self, question_id: str, question: str, prediction: str, reference: str
+    ) -> AnswerScore:
+        if is_abstention(prediction):
+            return self._abstention_score(question_id, prediction, reference)
+
+        response = self.client.complete(
+            prompt=build_judge_prompt(question, reference, prediction),
+            system=JUDGE_SYSTEM,
+            model=self.config.model,
+            max_tokens=self.config.max_tokens,
+            effort=self.config.effort,
+        )
+        return self.parse_verdict(question_id, response.text, prediction, reference)
+
+    def score_many(
+        self,
+        items: list[tuple[str, str, str, str]],
+        show_progress: bool = True,
+    ) -> list[AnswerScore]:
+        """Grade many answers, batching the judge calls when the client allows.
+
+        `items` are (question_id, question, prediction, reference). Abstentions
+        are graded locally and never reach the API, so the batch carries only
+        the answers that actually need a verdict.
+        """
+        if not self.client.use_batch:
+            return [self.score(*item) for item in items]
+
+        needs_judging = [item for item in items if not is_abstention(item[2])]
+        verdicts: dict[str, LLMResponse] = {}
+        if needs_judging:
+            verdicts = self.client.complete_batch(
+                [
+                    self.request_for(f"judge-{qid}", question, prediction, reference)
+                    for qid, question, prediction, reference in needs_judging
+                ],
+                show_progress=show_progress,
+            )
+
+        scores = []
+        for question_id, _question, prediction, reference in items:
+            if is_abstention(prediction):
+                scores.append(self._abstention_score(question_id, prediction, reference))
+            else:
+                verdict = verdicts[f"judge-{question_id}"]
+                scores.append(
+                    self.parse_verdict(question_id, verdict.text, prediction, reference)
+                )
+        return scores
 
 
 def aggregate_answers(scores: list[AnswerScore]) -> dict[str, float]:

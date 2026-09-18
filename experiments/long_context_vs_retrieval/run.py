@@ -33,11 +33,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from experiments._harness import write_csv  # noqa: E402
-from src.config import PROJECT_ROOT, load_config  # noqa: E402
+from src.config import PROJECT_ROOT, apply_override, load_config  # noqa: E402
 from src.embeddings.embedder import Embedder  # noqa: E402
 from src.evaluation.answer_scorer import aggregate_answers  # noqa: E402
 from src.evaluation.metrics import aggregate_retrieval, score_retrieval  # noqa: E402
-from src.generation.claude_client import ClaudeClient  # noqa: E402
+from src.generation.claude_client import ClaudeClient, LLMResponse  # noqa: E402
 from src.generation.prompts import format_chunks, format_documents  # noqa: E402
 from src.ingestion.documents import Document, EvalQuestion  # noqa: E402
 from src.ingestion.synthetic import subsample_questions  # noqa: E402
@@ -64,6 +64,42 @@ def order_documents(
     return [*others[:index], gold, *others[index:]]
 
 
+def _generate(
+    pipeline: RAGPipeline,
+    condition: str,
+    questions: list[EvalQuestion],
+    contexts: dict[str, str],
+    show_progress: bool,
+) -> dict[str, LLMResponse]:
+    """Generate every answer for one condition, batching when enabled.
+
+    Returns full responses rather than text: this experiment reports context
+    size, so it needs the input-token counts.
+    """
+    if not pipeline.client.use_batch:
+        responses = {}
+        for i, question in enumerate(questions, start=1):
+            if show_progress:
+                print(f"  [{i}/{len(questions)}] {question.question_id}", end="\r", flush=True)
+            responses[question.question_id] = pipeline.generate_response(
+                question.question, contexts[question.question_id]
+            )
+        return responses
+
+    # The custom_id carries the condition: one batch per condition here, but the
+    # ids stay unambiguous if conditions are ever submitted together.
+    batched = pipeline.client.complete_batch(
+        [
+            pipeline.answer_request(
+                f"answer-{condition}-{q.question_id}", q.question, contexts[q.question_id]
+            )
+            for q in questions
+        ],
+        show_progress=show_progress,
+    )
+    return {q.question_id: batched[f"answer-{condition}-{q.question_id}"] for q in questions}
+
+
 def run_condition(
     condition: str,
     pipeline: RAGPipeline,
@@ -74,54 +110,64 @@ def run_condition(
     documents_by_id = {d.doc_id: d for d in pipeline.documents}
     started = time.time()
 
+    # Phase 1: build each question's context. Local work, no API calls. The
+    # stuffed conditions differ from each other only in the index of one
+    # document, which is what makes this a position test rather than a content
+    # test.
     retrieval_results = []
-    answer_scores = []
-    per_question = []
+    contexts: dict[str, str] = {}
+    gold_positions: dict[str, int | None] = {}
+    retrieved_hits: dict[str, bool | None] = {}
 
-    for i, question in enumerate(questions, start=1):
-        if show_progress:
-            print(f"  [{i}/{len(questions)}] {question.question_id}", end="\r", flush=True)
-
-        gold_position = None
+    for question in questions:
         if condition == "rag":
             hits = pipeline.retrieve(question.question)
             retrieval = score_retrieval(question, hits, pipeline.chunks, documents_by_id)
             retrieval_results.append(retrieval)
-            context = format_chunks([h.chunk for h in hits])
-            retrieved_hit = retrieval.hit
+            contexts[question.question_id] = format_chunks([h.chunk for h in hits])
+            gold_positions[question.question_id] = None
+            retrieved_hits[question.question_id] = retrieval.hit
         else:
             ordered = order_documents(
                 pipeline.documents, question.gold_doc_id, POSITIONS[condition]
             )
-            gold_position = next(
+            contexts[question.question_id] = format_documents(ordered)
+            gold_positions[question.question_id] = next(
                 i for i, d in enumerate(ordered) if d.doc_id == question.gold_doc_id
             )
-            context = format_documents(ordered)
             # The gold document is present by construction in every stuffed
             # condition; there is no retrieval step that could have missed it.
-            retrieved_hit = None
+            retrieved_hits[question.question_id] = None
 
-        response = pipeline.generate_response(question.question, context)
-        score = pipeline.judge.score(
-            question.question_id, question.question, response.text, question.answer
-        )
-        answer_scores.append(score)
+    # Phase 2: generate every answer. Batched when the client allows -- this is
+    # the expensive phase, since a stuffed prompt carries the whole corpus.
+    responses = _generate(pipeline, condition, questions, contexts, show_progress)
 
-        per_question.append(
-            {
-                "condition": condition,
-                "question_id": question.question_id,
-                "reference": question.answer,
-                "prediction": response.text,
-                "retrieved_hit": retrieved_hit,
-                "gold_doc_position": gold_position,
-                "n_documents_in_context": None if condition == "rag" else len(pipeline.documents),
-                "input_tokens": response.input_tokens,
-                "answer_correct": score.correct,
-                "answer_abstained": score.abstained,
-                "answer_hallucinated": score.hallucinated,
-            }
-        )
+    # Phase 3: judge. Abstentions never reach the API.
+    answer_scores = pipeline.judge.score_many(
+        [
+            (q.question_id, q.question, responses[q.question_id].text, q.answer)
+            for q in questions
+        ],
+        show_progress=show_progress,
+    )
+
+    per_question = [
+        {
+            "condition": condition,
+            "question_id": question.question_id,
+            "reference": question.answer,
+            "prediction": responses[question.question_id].text,
+            "retrieved_hit": retrieved_hits[question.question_id],
+            "gold_doc_position": gold_positions[question.question_id],
+            "n_documents_in_context": None if condition == "rag" else len(pipeline.documents),
+            "input_tokens": responses[question.question_id].input_tokens,
+            "answer_correct": score.correct,
+            "answer_abstained": score.abstained,
+            "answer_hallucinated": score.hallucinated,
+        }
+        for question, score in zip(questions, answer_scores)
+    ]
 
     answers = aggregate_answers(answer_scores)
     # Null, not zero: retrieval did not happen in the stuffed conditions.
@@ -173,15 +219,30 @@ def main() -> int:
             "The corpus is unchanged; only the eval set shrinks."
         ),
     )
+    parser.add_argument(
+        "--batch",
+        dest="batch",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Send calls through the Batches API at half price (--no-batch to force "
+            "sequential). Overrides generation.use_batch in the config."
+        ),
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
+    if args.batch is not None:
+        config = apply_override(config, "generation.use_batch", args.batch)
     # A pilot writes to its own files so it cannot overwrite a full run's results.
     suffix = f"-pilot{args.max_questions}" if args.max_questions else ""
     log_path = PROJECT_ROOT / "results" / "logs" / f"{config.name}{suffix}.jsonl"
     csv_path = PROJECT_ROOT / "results" / f"{config.name}{suffix}.csv"
 
-    client = ClaudeClient(use_cache=config.generation.use_cache)
+    client = ClaudeClient(
+        use_cache=config.generation.use_cache,
+        use_batch=config.generation.use_batch,
+    )
     pipeline = RAGPipeline(config, client=client, embedder=Embedder(config.embedding))
     pipeline.build_corpus()
     pipeline.build_index()
@@ -197,6 +258,9 @@ def main() -> int:
           f"{stats['n_distractor_documents']} distractors), {stats['n_chunks']} chunks")
     print(f"Questions:  {len(questions)}")
     print(f"Model:      {config.generation.model}")
+    print(
+        f"Transport:  {'Batches API (50% cost, async)' if config.generation.use_batch else 'sequential'}"
+    )
     print(f"Conditions: {', '.join(args.conditions)}\n")
 
     log_path.parent.mkdir(parents=True, exist_ok=True)

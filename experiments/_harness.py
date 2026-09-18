@@ -16,7 +16,7 @@ import csv
 import sys
 from pathlib import Path
 
-from src.config import PROJECT_ROOT, load_config
+from src.config import PROJECT_ROOT, apply_override, load_config
 from src.sweep import run_sweep, summarize
 
 
@@ -58,9 +58,21 @@ def run_sweep_experiment(default_config: Path, argv: list[str] | None = None) ->
             "The corpus is unchanged; only the eval set shrinks."
         ),
     )
+    parser.add_argument(
+        "--batch",
+        dest="batch",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Send calls through the Batches API at half price (--no-batch to force "
+            "sequential). Overrides generation.use_batch in the config."
+        ),
+    )
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
+    if args.batch is not None:
+        config = apply_override(config, "generation.use_batch", args.batch)
     sweep_key = next(iter(config.sweep))
     values = [_parse_value(v) for v in args.values] if args.values else None
 
@@ -81,6 +93,9 @@ def run_sweep_experiment(default_config: Path, argv: list[str] | None = None) ->
         f"fact_sentences={config.corpus.fact_sentences}"
     )
     print(f"Model:      {config.generation.model} (judge: {config.judge.model})")
+    print(
+        f"Transport:  {'Batches API (50% cost, async)' if config.generation.use_batch else 'sequential'}"
+    )
 
     results = run_sweep(
         config,
