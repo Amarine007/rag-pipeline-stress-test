@@ -84,6 +84,32 @@ here while the same pipeline at k=1 was already losing answers.
 Failures are also a property of the question rather than of the noise — the set of failing
 questions is strictly nested as distractors are added, and the same five fail at both 3× and 4×.
 
+A follow-up sweep at **k=1** removes the four spare retrieval slots that were absorbing the
+ranking pressure. Degradation roughly doubles (11.2 points vs 6.2 from 0× to 4×) and becomes
+monotonic at every step — confirming that what MRR was measuring at k=5 was real, and that the
+headroom, not the retriever's robustness, was keeping it away from the generator. Hallucination
+is still exactly 0.000 in all six conditions: across both sweeps, **960 questions without a single
+fabricated answer.**
+
+### Reproducibility — how much is sampling noise?
+
+`temperature` no longer exists on current Claude models, so cold runs can't be pinned. The two
+conditions the chunk-size claim depends on (400, the peak; 600, the trough) were re-run three more
+times with the response cache **disabled**, 310 fresh API calls each:
+
+| draw | chunk 400 | chunk 600 |
+| --- | --- | --- |
+| original | 0.9875 | 0.8750 |
+| cold run 1 | 0.9875 | 0.8750 |
+| cold run 2 | 0.9875 | 0.8750 |
+| cold run 3 | 0.9875 | 0.8750 |
+
+**Aggregate variance across four independent draws is exactly zero**, and all 960 question-level
+verdict comparisons agree — the same questions fail, by identity, every time. The model is *not*
+deterministic (10–20% of answer texts differ between draws), but the variance lives entirely in
+phrasing, not in which fact gets reported. Two conditions were sampled, both lopsided; the
+near-coin-flip condition at 128 was not, and that caveat is stated in the paper.
+
 ### Experiment 3 — long-context vs. retrieved-context
 
 4 conditions, n=50 questions, 100-document corpus. **A null result.** All four conditions answered

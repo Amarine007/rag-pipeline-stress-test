@@ -1,0 +1,66 @@
+# Experiment 1c -- Cold-run variance at the peak and the trough.
+#
+# Not a new stress test. This re-runs two conditions from the chunk-size sweep
+# with the response cache DISABLED, repeatedly, to estimate the sampling
+# variance that Limitation 6 flags as unquantified -- which the paper itself
+# calls the most valuable single addition to this work.
+#
+# The two sizes are chosen to test the headline claim rather than to sample the
+# curve. 400 is the accuracy peak (0.988) and 600 is the trough (0.875), and the
+# claim that the trough is real rests on their intervals not overlapping. If the
+# gap survives repeated cold runs, the claim holds. If either condition's
+# accuracy wanders across that gap between runs, it does not, and the
+# non-monotonic result is an artifact of single-sample noise.
+#
+# `use_cache: false` on BOTH generation and judging, so nothing is read from or
+# written to `.llm_cache` and every run is an independent draw. This config is
+# therefore NOT free to re-run, unlike every other config here -- each
+# invocation costs roughly what one pair of conditions cost the first time.
+#
+# Everything else is byte-identical to chunk_size_sensitivity.yaml, including
+# the seed, so the corpus, chunking and eval set are the same objects the
+# original sweep used. The LLM is the only thing allowed to vary.
+
+name: chunk_size_variance
+description: >
+  Re-run the chunk-size peak and trough with caching disabled, to quantify
+  cold-run sampling variance in answer accuracy.
+seed: 20260917
+
+corpus:
+  n_relevant_docs: 80
+  distractor_ratio: 0.0      # no distractors: this experiment is about chunking alone
+  filler_sentences_per_doc: 6
+  fact_sentences: 3          # facts span setup/value/elaboration, not one tidy sentence
+  seed: 20260917
+
+chunking:
+  strategy: fixed
+  chunk_size: 400
+  chunk_overlap: 0           # zero overlap, so a severed fact stays severed
+
+embedding:
+  model_name: all-MiniLM-L6-v2
+  batch_size: 64
+  normalize: true
+
+retrieval:
+  k: 5
+  index_type: flat
+
+generation:
+  model: claude-opus-5
+  max_tokens: 1024
+  effort: low
+  use_cache: false           # the whole point: every run is an independent draw
+  use_batch: false
+
+judge:
+  model: claude-opus-5
+  max_tokens: 512
+  effort: low
+  use_cache: false           # judge variance is part of the variance being measured
+
+sweep:
+  # The peak and the trough. Not a curve -- a stability test on one gap.
+  chunking.chunk_size: [400, 600]

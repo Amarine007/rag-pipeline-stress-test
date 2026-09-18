@@ -254,8 +254,11 @@ parameters, and cached to disk. Re-running an experiment replays cached
 responses exactly.
 
 This makes a *re-run* of a completed experiment exactly reproducible. It does
-**not** make a cold run on a fresh cache reproducible, and the residual sampling
-variance across cold runs is unquantified in this work. See Limitations.
+**not** make a cold run on a fresh cache reproducible. §3.3 measures that
+residual variance directly for the two conditions the main result depends on,
+by re-running them with caching disabled: aggregate accuracy did not move at
+all across four independent draws, though 10–20% of answer texts did. See
+Limitation 6 for what that does and does not cover.
 
 ---
 
@@ -393,6 +396,58 @@ condition: accuracy equals hit rate exactly (0.625 both). Where fixed-width
 splitting scatters fragments of a fact across several chunks that the generator
 can reassemble, recursive splitting tends to deliver the fact whole or not at
 all — so there is nothing left to assemble.
+
+### 3.3 How much of the trough is sampling noise?
+
+§2.6 explains that the response cache makes a *re-run* exact but cannot make a
+*cold* run reproducible, because the sampling parameters have been removed from
+the model. The headline claim of §3.1 — that the trough at 600 is real because
+its interval does not overlap 700's — depends on those accuracies being stable
+quantities rather than single noisy draws. This section measures that directly.
+
+The two conditions the claim rests on, 400 (the peak) and 600 (the trough), were
+re-run three further times with the response cache **disabled for both
+generation and judging**, so that each run is an independent draw from the
+model. Each run issued 310 fresh API calls and zero cache hits. Nothing else
+changed: same seed, same corpus, same chunking, same eval set.
+
+| draw | chunk 400 accuracy | chunk 600 accuracy | chunk 600 hallucination |
+| --- | --- | --- | --- |
+| original (cached) | 0.9875 | 0.8750 | 0.0125 |
+| cold run 1 | 0.9875 | 0.8750 | 0.0125 |
+| cold run 2 | 0.9875 | 0.8750 | 0.0125 |
+| cold run 3 | 0.9875 | 0.8750 | 0.0125 |
+
+**Aggregate variance across four independent draws is exactly zero**, and the
+agreement is far stronger than the rates alone suggest. Across all six pairwise
+comparisons of the four draws, at both chunk sizes, the judged verdict agreed on
+**80 of 80 questions every time** — 960 question-level comparisons without a
+single disagreement. The failing questions are not merely equal in number but
+identical in identity: `q-0025` at chunk 400, and the same ten questions at
+chunk 600, in every draw. The one hallucination at chunk 600 is the same
+question (`q-0024`) each time.
+
+**The model is not deterministic, however, and the distinction matters.** The
+generated answer *text* differed on 10–20% of questions between any two draws
+(agreement ranged from 64/80 to 72/80). The model genuinely samples different
+wordings run to run; what it does not do is change which fact it reports. The
+residual non-determinism lives entirely in phrasing, and the LLM judge — whose
+own calls were also uncached here, so its variance is included in this
+measurement — saw through that rewording every time.
+
+The practical consequence is that for this task, answer correctness is
+determined by the retrieved context rather than by sampling. That is what makes
+the 400-versus-600 gap a property of the chunking and not an artifact of a lucky
+run, and it is the strongest available evidence that §3.1's non-monotonic curve
+is real.
+
+**This does not generalize to the whole sweep, and is not claimed to.** Two
+conditions were sampled, both with lopsided outcomes (79/80 and 70/80). The
+condition most likely to show genuine instability is 128, where accuracy is
+0.425 — close to a coin flip, so individual questions plausibly sit near a
+decision boundary that sampling could push either way. That condition was not
+re-run. The claim here is narrow and specific: the peak-versus-trough gap that
+§3.1's headline rests on is stable, not that every number in this paper is.
 
 ---
 
@@ -659,12 +714,21 @@ caveats.
    incorrect, so judge confusion deflates rather than inflates accuracy — but
    its agreement rate with a human grader is unmeasured.
 
-6. **Cold-run non-determinism.** As described in §2.6, the response cache makes
-   re-runs exact but does not eliminate sampling variance on a cold cache.
-   Reported numbers come from a single cold run per condition; no variance
-   across repeated cold runs is estimated. A repeated-run variance estimate would
-   materially strengthen the results and is the most valuable single addition to
-   this work.
+6. **Cold-run non-determinism — partially resolved.** As described in §2.6, the
+   response cache makes re-runs exact but does not eliminate sampling variance
+   on a cold cache. §3.3 now quantifies this for the two conditions the headline
+   claim depends on: across four independent cold draws, aggregate accuracy was
+   identical to four decimal places and the judged verdict agreed on all 960
+   question-level comparisons, while 10–20% of answer *texts* differed. For
+   those conditions the residual variance is in wording only, and the
+   peak-versus-trough gap is stable.
+
+   The limitation is narrowed rather than eliminated. Every other condition in
+   this paper still rests on a single cold draw, and the two sampled conditions
+   were both lopsided (79/80 and 70/80) — the conditions near 0.5 accuracy,
+   where sampling is most likely to move individual questions across a decision
+   boundary, were not tested. Chunk size 128, at 0.425, is the obvious candidate
+   and is the cheapest remaining way to strengthen this work.
 
 7. **Experiment 3 hit a ceiling and is uninformative about position.** Every
    condition scored 50/50, so the lost-in-the-middle probe had no headroom to
