@@ -19,6 +19,7 @@ would read as "retrieval failed" when the truth is "retrieval did not happen".
 
     python experiments/long_context_vs_retrieval/run.py
     python experiments/long_context_vs_retrieval/run.py --conditions rag full_middle
+    python experiments/long_context_vs_retrieval/run.py --max-questions 10
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from src.evaluation.metrics import aggregate_retrieval, score_retrieval  # noqa:
 from src.generation.claude_client import ClaudeClient  # noqa: E402
 from src.generation.prompts import format_chunks, format_documents  # noqa: E402
 from src.ingestion.documents import Document, EvalQuestion  # noqa: E402
+from src.ingestion.synthetic import subsample_questions  # noqa: E402
 from src.pipeline import RAGPipeline  # noqa: E402
 
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "long_context_vs_retrieval.yaml"
@@ -129,6 +131,7 @@ def run_condition(
         "precision_at_k": None,
         "recall_at_k": None,
         "mrr": None,
+        "mean_relevant_chunks_in_corpus": None,
     }
 
     mean_input_tokens = (
@@ -161,23 +164,38 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--conditions", nargs="*", default=ALL_CONDITIONS)
+    parser.add_argument(
+        "--max-questions",
+        type=int,
+        default=None,
+        help=(
+            "Evaluate only the first N questions, for a reduced pilot run. "
+            "The corpus is unchanged; only the eval set shrinks."
+        ),
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
-    log_path = PROJECT_ROOT / "results" / "logs" / f"{config.name}.jsonl"
-    csv_path = PROJECT_ROOT / "results" / f"{config.name}.csv"
+    # A pilot writes to its own files so it cannot overwrite a full run's results.
+    suffix = f"-pilot{args.max_questions}" if args.max_questions else ""
+    log_path = PROJECT_ROOT / "results" / "logs" / f"{config.name}{suffix}.jsonl"
+    csv_path = PROJECT_ROOT / "results" / f"{config.name}{suffix}.csv"
 
     client = ClaudeClient(use_cache=config.generation.use_cache)
     pipeline = RAGPipeline(config, client=client, embedder=Embedder(config.embedding))
     pipeline.build_corpus()
     pipeline.build_index()
 
+    questions = subsample_questions(pipeline.questions, args.max_questions)
+
     stats = pipeline.corpus_stats()
     print(f"Experiment: {config.name}")
+    if args.max_questions:
+        print(f"PILOT RUN:  first {args.max_questions} questions only -- not a full result")
     print(f"Corpus:     {stats['n_documents']} documents "
           f"({stats['n_relevant_documents']} relevant, "
           f"{stats['n_distractor_documents']} distractors), {stats['n_chunks']} chunks")
-    print(f"Questions:  {len(pipeline.questions)}")
+    print(f"Questions:  {len(questions)}")
     print(f"Model:      {config.generation.model}")
     print(f"Conditions: {', '.join(args.conditions)}\n")
 
@@ -189,7 +207,7 @@ def main() -> int:
     for condition in args.conditions:
         if condition not in ALL_CONDITIONS:
             raise SystemExit(f"Unknown condition {condition!r}. Choose from {ALL_CONDITIONS}.")
-        result = run_condition(condition, pipeline, pipeline.questions)
+        result = run_condition(condition, pipeline, questions)
 
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(result, ensure_ascii=False) + "\n")

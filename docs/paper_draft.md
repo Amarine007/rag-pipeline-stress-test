@@ -86,9 +86,21 @@ The corpus is synthetic and seeded. Each document describes a fictional software
 system — names like "Halcyon Index" — using a fixed set of sentence templates
 covering eight attributes (rebuild cadence, latency budget, vector
 dimensionality, maintainer, and so on). Each relevant document contains exactly
-one *planted fact*: the sentence stating the attribute that its question asks
+one *planted fact*: the passage stating the attribute that its question asks
 about. The remaining sentences describe other attributes of the same system and
 are never queried.
+
+A planted fact spans three consecutive sentences (`corpus.fact_sentences`), and
+the split is deliberate. The first sentence names the system and introduces the
+property without stating its value; the second states the value but refers back
+anaphorically, never repeating the system name; the third elaborates. Neither
+half is sufficient alone — a chunk holding only the value sentence cannot say
+which system it describes, and a chunk holding only the setup has no value to
+report. A one-sentence mode is retained in the generator and used as a
+comparison point in §3, but it is not what the reported experiments run on: a
+corpus in which every answer is one self-contained sentence makes chunk
+boundaries unrealistically decisive, since a chunk then either holds the entire
+answer or none of it.
 
 Three properties motivate this design over a public QA dataset:
 
@@ -114,10 +126,27 @@ boundaries move whenever chunk size changes, so a label of the form "chunk 7 is
 correct" means something different in every condition of Experiment 1.
 
 A chunk is counted as relevant to a question if it comes from that question's
-gold document and overlaps the planted fact's span by at least 50% of the fact's
-length. The threshold is a parameter; 50% is the reported setting, chosen so
-that a chunk holding a bare sliver of the fact does not count as answer-bearing
-while a chunk holding most of it does.
+gold document, overlaps the planted fact's span by at least 50% of the fact's
+length, **and** wholly contains the fact's value-bearing sentence. The overlap
+threshold is a parameter; 50% is the reported setting, chosen so that a chunk
+holding a bare sliver of the fact does not count as answer-bearing while a chunk
+holding most of it does.
+
+The two clauses exist because the two halves of answerability degrade
+differently. The literal value is all-or-nothing — half of a number is not the
+number — so it is required whole. The surrounding context that binds that value
+to a named system degrades gradually, so it is scored by proportion. Requiring
+only the overlap ratio would count a chunk that holds the setup and the
+elaboration but not the value; requiring only the value sentence would count a
+chunk that states a number with nothing to attach it to.
+
+One consequence is worth stating plainly, because it is the strongest single
+result the corpus produces. When the chunk size is smaller than the fact
+passage, **no chunking of the corpus yields an answer-bearing chunk at all** —
+the number of relevant chunks in the entire corpus falls below one per question.
+Retrieval at those sizes is not performing badly; it is being asked for
+something that does not exist. A corpus of one-sentence facts cannot express
+this failure, because a sentence-sized chunk always suffices.
 
 ### 2.4 Metrics
 
@@ -132,6 +161,12 @@ single score.
 | precision@k | Relevant chunks retrieved / *k* |
 | recall@k | Relevant chunks retrieved / relevant chunks in corpus |
 | MRR | Mean of 1/(rank of first relevant chunk) |
+| gold chunks available | Relevant chunks in the whole corpus, per question |
+
+The last is a diagnostic rather than a score. It is the ceiling on hit rate@k:
+when it falls below 1.0, some questions have no answer-bearing chunk anywhere in
+the corpus, and no retriever could have succeeded on them. It is reported beside
+hit rate@k so that a chunking failure is never misread as a retrieval failure.
 
 A note on which to read. Textbook recall@k divides by the *total* number of
 relevant chunks in the corpus — a denominator that itself changes with chunk
@@ -273,16 +308,17 @@ caveats.
 2. **Synthetic corpus.** The corpus buys exact ground truth and controlled
    distractors at the cost of realism. Its documents are short, uniformly
    structured, and template-generated. Real corpora have irregular structure,
-   redundancy, and facts that are stated across several sentences rather than
-   one. The *mechanisms* demonstrated here should generalize; the specific
-   thresholds — the chunk size at which retrieval collapses, the distractor
-   ratio at which accuracy falls — almost certainly do not.
+   and redundancy. The *mechanisms* demonstrated here should generalize; the
+   specific thresholds — the chunk size at which retrieval collapses, the
+   distractor ratio at which accuracy falls — almost certainly do not.
 
-3. **Single-sentence facts.** Every planted fact is one self-contained sentence.
-   This makes the chunk-boundary mechanism unusually clean and probably
-   overstates how sharply chunk size matters relative to a corpus where answers
-   require combining information across sentences. No multi-hop questions are
-   tested.
+3. **Facts are contiguous, and single-hop.** A planted fact spans three
+   sentences, which avoids the artificially crisp chunk boundary of a
+   one-sentence corpus, but those sentences are always adjacent. Real answers
+   are sometimes distributed across distant parts of a document, or across
+   documents. No multi-hop questions are tested: every question is answerable
+   from one contiguous passage, so these results characterize how retrieval
+   fails at locating a passage, not how it fails at assembling one.
 
 4. **One embedding model, one generation model.** All results are for
    `all-MiniLM-L6-v2` and `claude-opus-5`. The 384-dimensional MiniLM embedder is
@@ -320,6 +356,12 @@ python experiments/distractor_sensitivity/run.py
 python experiments/long_context_vs_retrieval/run.py
 python scripts/make_figures.py --tables
 ```
+
+Any runner accepts `--max-questions N`, which evaluates only the first *N*
+questions while leaving the corpus untouched. It exists for cheap pilot runs
+against a fresh API key. Pilot output is written to `*-pilotN` files so it
+cannot overwrite a full run, and `n` travels with every metric block, so a
+reduced run is identifiable from its results alone.
 
 Per-condition aggregates land in `results/*.csv`; per-question detail, including
 every prediction and every judge verdict, lands in `results/logs/*.jsonl`.

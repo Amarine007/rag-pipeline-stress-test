@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from src.config import CorpusConfig
-from src.ingestion.synthetic import generate_corpus
+from src.ingestion.synthetic import generate_corpus, subsample_questions
 
 
 def test_same_seed_produces_identical_corpus():
@@ -100,3 +100,99 @@ def test_questions_are_balanced_across_attribute_types():
 def test_exhausting_the_name_pool_is_a_clear_error():
     with pytest.raises(ValueError, match="unique system names"):
         generate_corpus(CorpusConfig(n_relevant_docs=500, distractor_ratio=1.0))
+
+
+# -- Multi-sentence facts ------------------------------------------------
+#
+# The point of a multi-sentence fact is that no single sentence is sufficient:
+# one sentence binds the system name, another states the value. These tests pin
+# that property, because a template edit that let the value sentence repeat the
+# system name would silently restore the single-sentence behaviour and make the
+# chunk-size results overstate the effect again.
+
+
+@pytest.mark.parametrize("n_sentences", [2, 3])
+def test_multi_sentence_fact_spans_several_sentences(n_sentences):
+    docs, questions = generate_corpus(
+        CorpusConfig(n_relevant_docs=8, fact_sentences=n_sentences, seed=11)
+    )
+    by_id = {d.doc_id: d for d in docs}
+    for question in questions:
+        span = by_id[question.gold_doc_id].fact(question.gold_fact_id)
+        assert span.text.count(". ") == n_sentences - 1
+        assert span.has_required_span
+
+
+def test_value_sentence_carries_the_answer_but_not_the_system_name():
+    docs, questions = generate_corpus(
+        CorpusConfig(n_relevant_docs=8, fact_sentences=3, seed=13)
+    )
+    by_id = {d.doc_id: d for d in docs}
+    for question in questions:
+        document = by_id[question.gold_doc_id]
+        span = document.fact(question.gold_fact_id)
+        # The value lives in the required sentence...
+        assert question.answer in span.required_text
+        # ...and the system name does not, so a chunk holding only that
+        # sentence cannot say which system the value belongs to.
+        assert question.topic not in span.required_text
+        # The name is bound elsewhere in the passage.
+        assert question.topic in span.text
+
+
+def test_single_sentence_facts_record_no_required_subrange():
+    """The extra criterion must be a no-op for the one-sentence corpus."""
+    docs, questions = generate_corpus(
+        CorpusConfig(n_relevant_docs=8, fact_sentences=1, seed=17)
+    )
+    by_id = {d.doc_id: d for d in docs}
+    for question in questions:
+        assert not by_id[question.gold_doc_id].fact(question.gold_fact_id).has_required_span
+
+
+def test_distractors_match_relevant_documents_in_shape():
+    """A distractor must not be identifiable by being shorter or flatter."""
+    docs, _ = generate_corpus(
+        CorpusConfig(n_relevant_docs=12, distractor_ratio=1.0, fact_sentences=3, seed=19)
+    )
+    relevant = [d for d in docs if not d.is_distractor]
+    distractors = [d for d in docs if d.is_distractor]
+    assert distractors and relevant
+    # Same sentence budget: the decoy passage takes the planted fact's place.
+    assert {d.text.count(".") for d in distractors} == {d.text.count(".") for d in relevant}
+    assert all(d.fact_spans == () for d in distractors)
+
+
+def test_invalid_fact_sentence_count_is_rejected():
+    with pytest.raises(ValueError, match="fact_sentences must be 1, 2, or 3"):
+        generate_corpus(CorpusConfig(n_relevant_docs=4, fact_sentences=4))
+
+
+# -- Pilot subsampling ---------------------------------------------------
+
+
+def test_subsample_takes_a_prefix_and_leaves_the_corpus_alone():
+    docs, questions = generate_corpus(CorpusConfig(n_relevant_docs=32, seed=31))
+    pilot = subsample_questions(questions, 10)
+    assert len(pilot) == 10
+    assert pilot == questions[:10]
+    # The corpus is untouched: a pilot must pose the same retrieval problem.
+    assert len(docs) == 32
+
+
+def test_subsample_is_near_balanced_across_attribute_types():
+    """A pilot that only asked one kind of question would not be a useful pilot."""
+    _, questions = generate_corpus(CorpusConfig(n_relevant_docs=32, seed=37))
+    attributes = {q.gold_fact_id.split(":")[1] for q in subsample_questions(questions, 8)}
+    assert len(attributes) == 8
+
+
+def test_subsample_with_no_limit_is_a_passthrough():
+    _, questions = generate_corpus(CorpusConfig(n_relevant_docs=8, seed=41))
+    assert subsample_questions(questions, None) is questions
+
+
+def test_subsample_rejects_a_nonsense_limit():
+    _, questions = generate_corpus(CorpusConfig(n_relevant_docs=8, seed=43))
+    with pytest.raises(ValueError, match="at least 1"):
+        subsample_questions(questions, 0)

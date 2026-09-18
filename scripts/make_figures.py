@@ -215,6 +215,10 @@ SWEEP_COLUMNS = [
     ("hit_rate_at_k", "hit rate@k"),
     ("precision_at_k", "precision@k"),
     ("mrr", "MRR"),
+    # Below 1.0, some questions have no answer-bearing chunk anywhere in the
+    # corpus, which caps hit rate independently of the retriever. Reported
+    # beside hit rate so the two are never read apart.
+    ("mean_relevant_chunks_in_corpus", "gold chunks avail."),
     ("accuracy", "accuracy"),
     ("abstention_rate", "abstention"),
     ("hallucination_rate", "hallucination"),

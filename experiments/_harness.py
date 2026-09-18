@@ -49,26 +49,46 @@ def run_sweep_experiment(default_config: Path, argv: list[str] | None = None) ->
     parser.add_argument(
         "--quiet", action="store_true", help="Suppress per-condition progress output."
     )
+    parser.add_argument(
+        "--max-questions",
+        type=int,
+        default=None,
+        help=(
+            "Evaluate only the first N questions, for a reduced pilot run. "
+            "The corpus is unchanged; only the eval set shrinks."
+        ),
+    )
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
     sweep_key = next(iter(config.sweep))
     values = [_parse_value(v) for v in args.values] if args.values else None
 
-    log_path = PROJECT_ROOT / "results" / "logs" / f"{config.name}.jsonl"
-    csv_path = PROJECT_ROOT / "results" / f"{config.name}.csv"
+    # A pilot writes to its own files so it cannot overwrite a full run's results.
+    suffix = f"-pilot{args.max_questions}" if args.max_questions else ""
+    log_path = PROJECT_ROOT / "results" / "logs" / f"{config.name}{suffix}.jsonl"
+    csv_path = PROJECT_ROOT / "results" / f"{config.name}{suffix}.csv"
 
     print(f"Experiment: {config.name}")
+    if args.max_questions:
+        print(f"PILOT RUN:  first {args.max_questions} questions only -- not a full result")
     print(f"Varying:    {sweep_key} = {values or config.sweep[sweep_key]}")
     print(
         f"Held fixed: seed={config.corpus.seed}, k={config.retrieval.k}, "
         f"n_relevant_docs={config.corpus.n_relevant_docs}, "
         f"chunking={config.chunking.strategy}/{config.chunking.chunk_size}, "
-        f"distractor_ratio={config.corpus.distractor_ratio}"
+        f"distractor_ratio={config.corpus.distractor_ratio}, "
+        f"fact_sentences={config.corpus.fact_sentences}"
     )
     print(f"Model:      {config.generation.model} (judge: {config.judge.model})")
 
-    results = run_sweep(config, log_path, values=values, show_progress=not args.quiet)
+    results = run_sweep(
+        config,
+        log_path,
+        values=values,
+        show_progress=not args.quiet,
+        max_questions=args.max_questions,
+    )
 
     rows = summarize(results)
     write_csv(rows, csv_path)

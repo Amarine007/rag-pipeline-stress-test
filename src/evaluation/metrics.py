@@ -1,10 +1,18 @@
 """Retrieval metrics, computed against exact fact spans.
 
 **Relevance.** A chunk is relevant to a question if it comes from that
-question's gold document and overlaps the planted fact's character span by at
-least `min_overlap_ratio` of the fact's length. Overlap is used rather than
-chunk identity because chunk boundaries move every time chunk size changes;
-spans do not.
+question's gold document, overlaps the planted fact's character span by at least
+`min_overlap_ratio` of the fact's length, *and* wholly contains the fact's
+value-bearing sentence. Overlap is used rather than chunk identity because chunk
+boundaries move every time chunk size changes; spans do not.
+
+The second clause only bites for multi-sentence facts, where the fact is a
+passage whose value appears in one sentence and whose binding to the system name
+appears in another. Both conditions have to hold for a chunk to be answerable on
+its own: a chunk holding most of the passage but not the value cannot state the
+answer, and a chunk holding the value sentence alone cannot say what system it
+belongs to. Single-sentence facts record no value sub-range, so the criterion
+reduces to the overlap ratio exactly as before.
 
 **Why both recall@k and hit_rate@k.** Textbook recall@k divides retrieved
 relevant items by *total* relevant items. That number is misleading in a
@@ -50,6 +58,9 @@ def is_relevant(
 
     fact_length = span.end - span.start
     if fact_length <= 0:
+        return False
+
+    if not span.contains_required(chunk.start, chunk.end):
         return False
 
     overlap = span.overlap_chars(chunk.start, chunk.end)
@@ -121,11 +132,23 @@ def aggregate_retrieval(results: list[QuestionRetrievalResult]) -> dict[str, flo
     """Mean metrics over the eval set. `n` is carried so results can be read with it."""
     n = len(results)
     if n == 0:
-        return {"n": 0, "hit_rate_at_k": 0.0, "precision_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.0}
+        return {
+            "n": 0,
+            "hit_rate_at_k": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "mrr": 0.0,
+            "mean_relevant_chunks_in_corpus": 0.0,
+        }
     return {
         "n": n,
         "hit_rate_at_k": sum(r.hit for r in results) / n,
         "precision_at_k": sum(r.precision_at_k for r in results) / n,
         "recall_at_k": sum(r.recall_at_k for r in results) / n,
         "mrr": sum(r.reciprocal_rank for r in results) / n,
+        # How many answer-bearing chunks exist anywhere in the corpus, per
+        # question. Below 1.0, some questions have no answer-bearing chunk at
+        # all and retrieval is being asked for something that does not exist --
+        # a ceiling on hit rate that has nothing to do with the retriever.
+        "mean_relevant_chunks_in_corpus": sum(r.n_relevant_in_corpus for r in results) / n,
     }

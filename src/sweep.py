@@ -29,7 +29,7 @@ from src.config import ExperimentConfig, apply_override
 from src.embeddings.embedder import Embedder
 from src.generation.claude_client import ClaudeClient
 from src.ingestion.documents import Document, EvalQuestion
-from src.ingestion.synthetic import generate_corpus
+from src.ingestion.synthetic import generate_corpus, subsample_questions
 from src.pipeline import RAGPipeline, RunResult
 
 
@@ -71,8 +71,14 @@ def run_sweep(
     output_path: Path,
     values: Iterable[Any] | None = None,
     show_progress: bool = True,
+    max_questions: int | None = None,
 ) -> list[RunResult]:
     """Run every condition of `config`'s sweep, appending results to `output_path`.
+
+    `max_questions` truncates the eval set for a reduced pilot run. It shrinks
+    the questions only, never the corpus, and applies identically to every
+    condition -- so conditions stay comparable with each other, though a pilot's
+    numbers are not comparable with a full run's.
 
     Returns the results in sweep order.
     """
@@ -93,6 +99,7 @@ def run_sweep(
 
     # The eval set comes from the baseline corpus and never changes afterwards.
     _, baseline_questions = generate_corpus(config.corpus)
+    baseline_questions = subsample_questions(baseline_questions, max_questions)
 
     results: list[RunResult] = []
     for i, value in enumerate(sweep_values, start=1):
@@ -107,7 +114,13 @@ def run_sweep(
         pipeline.build_index()
 
         result = pipeline.evaluate(
-            condition={"experiment": config.name, "variable": sweep_key, "value": value}
+            condition={
+                "experiment": config.name,
+                "variable": sweep_key,
+                "value": value,
+                # Recorded so a pilot log can never be mistaken for a full run.
+                "pilot_max_questions": max_questions,
+            }
         )
         results.append(result)
 
@@ -146,6 +159,9 @@ def summarize(results: list[RunResult]) -> list[dict]:
                 "precision_at_k": result.retrieval_metrics.get("precision_at_k"),
                 "recall_at_k": result.retrieval_metrics.get("recall_at_k"),
                 "mrr": result.retrieval_metrics.get("mrr"),
+                "mean_relevant_chunks_in_corpus": result.retrieval_metrics.get(
+                    "mean_relevant_chunks_in_corpus"
+                ),
                 # Answer quality
                 "accuracy": result.answer_metrics.get("accuracy"),
                 "abstention_rate": result.answer_metrics.get("abstention_rate"),

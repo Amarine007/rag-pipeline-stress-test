@@ -32,6 +32,19 @@ class CorpusConfig:
     filler_sentences_per_doc: int = 6
     """Sentences of on-topic filler surrounding the planted fact."""
 
+    fact_sentences: int = 1
+    """How many consecutive sentences the planted fact spans (1, 2, or 3).
+
+    At 1 the fact is a single self-contained sentence, which makes the
+    chunk-boundary mechanism unrealistically crisp: a chunk either has the whole
+    answer or none of it. At 2 or 3 the system name, the value, and its
+    elaboration sit in different sentences, so a chunk boundary can sever the
+    value from the entity it belongs to -- the ordinary case in real corpora.
+
+    Defaults to 1 so that constructing a `CorpusConfig()` reproduces the original
+    corpus; every config in `configs/` sets this explicitly.
+    """
+
     seed: int = 20260917
 
 

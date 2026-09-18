@@ -20,12 +20,31 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class FactSpan:
-    """The character range of a planted, question-answering fact within a document."""
+    """The character range of a planted, question-answering fact within a document.
+
+    A fact may span several sentences. When it does, the span covers the whole
+    passage, and `required_start`/`required_end` additionally mark the one
+    sentence that actually states the value. The distinction matters because the
+    two halves of answerability degrade differently as chunks shrink: the literal
+    value is all-or-nothing (half a number is not the number), while the
+    surrounding context that binds the value to its system degrades gradually.
+    See `src/evaluation/metrics.py` for how the two are combined.
+
+    Single-sentence facts leave the required sub-range unset, in which case the
+    whole span is the value.
+    """
 
     fact_id: str
     start: int
     end: int
     text: str
+    required_start: int | None = None
+    required_end: int | None = None
+    required_text: str = ""
+
+    @property
+    def has_required_span(self) -> bool:
+        return self.required_start is not None and self.required_end is not None
 
     def overlaps(self, start: int, end: int) -> bool:
         """True if [start, end) intersects this span at all."""
@@ -34,6 +53,16 @@ class FactSpan:
     def overlap_chars(self, start: int, end: int) -> int:
         """Number of characters shared with [start, end)."""
         return max(0, min(end, self.end) - max(start, self.start))
+
+    def contains_required(self, start: int, end: int) -> bool:
+        """True if [start, end) wholly contains the value-bearing sentence.
+
+        Always true when no required sub-range is recorded, so single-sentence
+        facts keep the overlap-ratio criterion on its own.
+        """
+        if not self.has_required_span:
+            return True
+        return start <= self.required_start and end >= self.required_end
 
 
 @dataclass(frozen=True)
@@ -66,6 +95,22 @@ class Document:
                     f"Fact span {span.fact_id} in {self.doc_id} is misaligned.\n"
                     f"  expected: {span.text!r}\n"
                     f"  actual:   {actual!r}"
+                )
+            if not span.has_required_span:
+                continue
+            if span.required_start < span.start or span.required_end > span.end:
+                raise ValueError(
+                    f"Fact span {span.fact_id} in {self.doc_id} has a required sub-range "
+                    f"[{span.required_start}:{span.required_end}] outside the span "
+                    f"[{span.start}:{span.end}]."
+                )
+            actual_required = self.text[span.required_start : span.required_end]
+            if actual_required != span.required_text:
+                raise ValueError(
+                    f"Fact span {span.fact_id} in {self.doc_id} has a misaligned value "
+                    f"sentence.\n"
+                    f"  expected: {span.required_text!r}\n"
+                    f"  actual:   {actual_required!r}"
                 )
 
 

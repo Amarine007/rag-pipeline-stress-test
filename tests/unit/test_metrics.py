@@ -140,3 +140,70 @@ def test_aggregate_reports_n():
 
 def test_aggregate_of_nothing_is_zero_not_a_crash():
     assert aggregate_retrieval([])["n"] == 0
+
+
+# -- Multi-sentence facts: the value sentence must be present whole ------
+
+MULTI_DOC = Document(
+    doc_id="doc-multi",
+    text=(
+        "Halcyon Index maintains a primary shard that is rebuilt on a fixed schedule. "  # 0-77
+        "That rebuild runs every 36 hours. "  # 78-111
+        "Operators are paged if two consecutive rebuilds are missed."  # 112-170
+    ),
+    fact_spans=(
+        FactSpan(
+            fact_id="doc-multi:rebuild_cadence",
+            start=0,
+            end=170,
+            text=(
+                "Halcyon Index maintains a primary shard that is rebuilt on a fixed schedule. "
+                "That rebuild runs every 36 hours. "
+                "Operators are paged if two consecutive rebuilds are missed."
+            ),
+            required_start=78,
+            required_end=111,
+            required_text="That rebuild runs every 36 hours.",
+        ),
+    ),
+)
+MULTI_DOCS_BY_ID = {MULTI_DOC.doc_id: MULTI_DOC}
+MULTI_QUESTION = EvalQuestion(
+    question_id="q-multi",
+    question="How often does Halcyon Index rebuild its primary shard?",
+    answer="every 36 hours",
+    gold_doc_id="doc-multi",
+    gold_fact_id="doc-multi:rebuild_cadence",
+)
+
+
+def _multi_chunk(start: int, end: int) -> Chunk:
+    return Chunk(
+        chunk_id=f"doc-multi:{start}",
+        doc_id="doc-multi",
+        text=MULTI_DOC.text[start:end],
+        start=start,
+        end=end,
+        chunk_index=0,
+    )
+
+
+def test_chunk_with_whole_passage_is_relevant():
+    assert is_relevant(_multi_chunk(0, 170), MULTI_QUESTION, MULTI_DOCS_BY_ID)
+
+
+def test_chunk_missing_the_value_sentence_is_not_relevant():
+    """Setup plus elaboration clears the overlap ratio but cannot state the answer."""
+    chunk = _multi_chunk(0, 105)  # cuts mid-way through the value sentence
+    span = MULTI_DOC.fact_spans[0]
+    assert span.overlap_chars(chunk.start, chunk.end) / (span.end - span.start) >= 0.5
+    assert not is_relevant(chunk, MULTI_QUESTION, MULTI_DOCS_BY_ID)
+
+
+def test_chunk_with_only_the_value_sentence_is_not_relevant():
+    """The value alone is unattributable: nothing says which system it describes."""
+    assert not is_relevant(_multi_chunk(78, 111), MULTI_QUESTION, MULTI_DOCS_BY_ID)
+
+
+def test_chunk_with_binding_and_value_is_relevant():
+    assert is_relevant(_multi_chunk(0, 111), MULTI_QUESTION, MULTI_DOCS_BY_ID)
