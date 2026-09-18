@@ -152,3 +152,36 @@ def aggregate_retrieval(results: list[QuestionRetrievalResult]) -> dict[str, flo
         # a ceiling on hit rate that has nothing to do with the retriever.
         "mean_relevant_chunks_in_corpus": sum(r.n_relevant_in_corpus for r in results) / n,
     }
+
+
+def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for a proportion.
+
+    Wilson rather than the textbook normal approximation, because several
+    conditions here sit at or near 0.0 and 1.0, where the normal interval is
+    badly wrong: at 80/80 it produces the degenerate width-zero interval
+    [1.0, 1.0], claiming certainty from a finite sample. Wilson stays inside
+    (0, 1) and keeps a sensible width at the boundaries, which is precisely
+    where this project's most interesting conditions land.
+
+    `z` defaults to 1.96 (95%). Returns (low, high), both clamped to [0, 1].
+    """
+    if n <= 0:
+        return (0.0, 0.0)
+    phat = successes / n
+    denominator = 1.0 + z * z / n
+    center = (phat + z * z / (2 * n)) / denominator
+    margin = (z / denominator) * ((phat * (1 - phat) / n + z * z / (4 * n * n)) ** 0.5)
+    return (max(0.0, center - margin), min(1.0, center + margin))
+
+
+def format_interval(rate: float, n: int, z: float = 1.96) -> str:
+    """Render a rate with its Wilson interval, e.g. `0.875 [0.785, 0.930]`.
+
+    Takes a rate rather than a count because that is what the aggregate metric
+    blocks carry; the count is recovered by rounding, which is exact for any
+    rate that came from `successes / n`.
+    """
+    successes = round(rate * n)
+    low, high = wilson_interval(successes, n, z)
+    return f"{rate:.3f} [{low:.3f}, {high:.3f}]"

@@ -243,3 +243,45 @@ def test_cost_report_says_nothing_was_spent_when_fully_cached():
     report = format_cost_report([usage], "claude-opus-5", False, 40, 160)
     assert "spent nothing" in report
     assert "Projected" not in report
+
+
+def test_wilson_interval_stays_inside_zero_one_at_the_boundaries():
+    """The reason for Wilson over the normal approximation.
+
+    A perfect 80/80 must not report the degenerate [1.0, 1.0] that the normal
+    approximation gives, because several conditions in this project sit exactly
+    there and a width-zero interval would claim certainty from 80 samples.
+    """
+    from src.evaluation.metrics import wilson_interval
+
+    low, high = wilson_interval(80, 80)
+    assert high == 1.0
+    assert 0.9 < low < 1.0
+
+    low, high = wilson_interval(0, 80)
+    assert low == 0.0
+    assert 0.0 < high < 0.1
+
+
+def test_wilson_interval_brackets_the_estimate_and_narrows_with_n():
+    from src.evaluation.metrics import wilson_interval
+
+    for n in (20, 80, 400):
+        low, high = wilson_interval(round(0.5 * n), n)
+        assert low < 0.5 < high
+    narrow = wilson_interval(200, 400)
+    wide = wilson_interval(10, 20)
+    assert (narrow[1] - narrow[0]) < (wide[1] - wide[0])
+
+
+def test_wilson_interval_of_an_empty_sample_is_not_a_crash():
+    from src.evaluation.metrics import wilson_interval
+
+    assert wilson_interval(0, 0) == (0.0, 0.0)
+
+
+def test_format_interval_recovers_the_count_from_the_rate():
+    from src.evaluation.metrics import format_interval
+
+    assert format_interval(0.875, 80).startswith("0.875 [")
+    assert format_interval(1.0, 80) == "1.000 [0.954, 1.000]"

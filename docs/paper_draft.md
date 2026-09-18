@@ -1,9 +1,9 @@
 # Where Retrieval-Augmented Generation Breaks: Three Controlled Stress Tests
 
-**Status: draft. Method and limitations are complete; results sections are empty
-pending experiment runs.** No numbers appear anywhere in this document until the
-experiments have actually been run. Placeholders are marked `[PENDING]` rather
-than filled with plausible estimates.
+**Status: draft. Experiment 1 is complete and written up; Experiments 2 and 3
+are pending.** No numbers appear anywhere in this document until the experiment
+producing them has actually been run. Outstanding sections are marked
+`[PENDING]` rather than filled with plausible estimates.
 
 ---
 
@@ -229,7 +229,7 @@ variance across cold runs is unquantified in this work. See Limitations.
 
 ## 3. Experiment 1 — Chunk-size sensitivity
 
-**Varied:** chunk size (64–1200 characters), and separately, chunking strategy
+**Varied:** chunk size (64–800 characters), and separately, chunking strategy
 (fixed-width vs. recursive) at a fixed size.
 **Held fixed:** corpus, *k*, eval question set, embedding model, generation model.
 **Overlap:** zero, so that a fact severed by a boundary stays severed.
@@ -247,14 +247,127 @@ below hit rate at 400-character chunks.)*
 
 ### 3.1 Results
 
-`[PENDING — experiment not yet run]`
+n = 80 questions per condition. Bracketed figures are 95% Wilson score
+intervals; Wilson rather than the normal approximation because several
+conditions sit at exactly 0.0 or 1.0, where the normal interval degenerates to
+zero width and would claim certainty from a finite sample.
+
+![Chunk-size sensitivity](../results/figures/chunk_size_sensitivity.png)
+
+| chunk | gold chunks avail. | hit rate@5 [95% CI] | MRR | accuracy [95% CI] | abstention | hallucination |
+| --- | --- | --- | --- | --- | --- | --- |
+| 64 | 0.000 | 0.000 [0.000, 0.046] | 0.000 | 0.025 [0.007, 0.087] | 0.963 | 0.013 |
+| 128 | 0.675 | 0.263 [0.179, 0.368] | 0.216 | 0.425 [0.323, 0.534] | 0.550 | 0.025 |
+| 200 | 0.775 | 0.700 [0.592, 0.789] | 0.623 | 0.825 [0.727, 0.893] | 0.175 | 0.000 |
+| 300 | 0.887 | 0.850 [0.756, 0.912] | 0.786 | 0.912 [0.830, 0.957] | 0.087 | 0.000 |
+| 400 | 0.938 | 0.938 [0.862, 0.973] | 0.870 | 0.988 [0.933, 0.998] | 0.013 | 0.000 |
+| 500 | 0.925 | 0.875 [0.785, 0.931] | 0.782 | 0.950 [0.878, 0.980] | 0.050 | 0.000 |
+| 600 | 0.938 | 0.875 [0.785, 0.931] | 0.789 | 0.875 [0.785, 0.931] | 0.113 | 0.013 |
+| 700 | 1.000 | 1.000 [0.954, 1.000] | 0.967 | 1.000 [0.954, 1.000] | 0.000 | 0.000 |
+| 800 | 1.000 | 1.000 [0.954, 1.000] | 0.988 | 1.000 [0.954, 1.000] | 0.000 | 0.000 |
+
+Documents in this corpus run 611–762 characters (mean 682), which is the scale
+every result below should be read against.
+
+**The low end fails at chunking, not at retrieval.** At 64 characters the
+`gold chunks available` column is exactly 0.000: no chunking of the corpus
+produces a single answer-bearing chunk for any question. Hit rate is 0.000
+because the target does not exist, not because the retriever missed it. This is
+the column's whole purpose — without it, a reader would score the retriever at
+zero on a task where no retriever could have done better. The effect persists in
+weaker form at 128 and 200, where only 0.675 and 0.775 answer-bearing chunks
+exist per question and hit rate is capped accordingly.
+
+**Answer accuracy exceeds hit rate@5 wherever retrieval is imperfect.** The gap
+is +16 points at 128, +12 at 200, and narrows to zero once retrieval saturates
+at 700. This is not noise and not judge error: `hit@k` asks whether *one*
+retrieved chunk is answer-bearing, while the generator sees all five and can
+assemble a fact from fragments that individually fail the answer-bearing test.
+Inspecting the retrieved chunks confirms the mechanism — two adjacent chunks
+from the gold document, the first binding the system name to the property and
+the second carrying the value. The gap exists only because planted facts span
+sentences (§2.2); a one-sentence corpus would show a gap of zero everywhere and
+would hide the effect entirely. The size of the gap is itself the measurement of
+how much the generator rescues a mediocre retriever.
+
+**Degradation runs through abstention, not fabrication.** Hallucination never
+exceeds 2 questions in 80 in any condition, and is exactly zero in five of the
+nine. The abstention column absorbs nearly all of the loss: at 64 characters the
+model declines to answer 96% of the time rather than inventing values. Given a
+context that does not contain the answer, this model's dominant failure is to
+say so. A binary correct/incorrect score would have reported the 64-character
+condition and a confidently-wrong condition as the same 0.03 accuracy.
+
+**The worst chunk size is not the smallest.** Above 200 the curve is not
+monotonic. Accuracy peaks at 400 (0.988), falls through 500 (0.950) to a trough
+at 600 (0.875), then recovers completely at 700 and 800 (1.000). The trough is
+not sampling noise: 600's interval [0.785, 0.931] does not overlap 700's or
+800's [0.954, 1.000].
+
+The mechanism is the interaction between chunk size and document length, and it
+has two distinct components that the metrics separate. At 600, every document
+splits into a 600-character chunk plus a tail as short as 11 characters; a fact
+straddling that boundary lands partly in an unretrievable stub, and
+`gold chunks available` falls to 0.938. But hit rate at 600 is 0.875, *below*
+that 0.938 ceiling, so a second effect is also present: a 600-character chunk
+dilutes the fact with more unrelated filler than a 400-character chunk does,
+weakening the embedding's match to the query. At 400 hit rate equals the ceiling
+exactly (0.938 = 0.938) — every available chunk is found. At 600 it does not.
+
+The recovery at 700 discriminates between the two candidate explanations, and it
+is why that condition was run. If dilution alone drove the trough, 700 and 800
+should be worse still, since they are larger. They are perfect instead. What
+changes at 700 is that it exceeds all but a handful of documents, so almost
+every document becomes a single chunk and almost no fact meets a boundary. The
+severing, not the size, is what the trough is made of.
+
+The practical claim is therefore sharper than "bigger chunks are better": **a
+chunk size slightly below the typical document length is a trap**, because it
+maximizes the chance of cutting a document into one large chunk and one useless
+fragment. Sizes comfortably above document length, or small enough to divide it
+evenly, both avoid it. This is a claim about the *relationship* between chunk
+size and document length, not about any absolute chunk size, and it is the one
+result here most likely to transfer to a real corpus — where document lengths
+vary far more, and where every chunk size is therefore "slightly below" some
+part of the distribution.
+
+### 3.2 Chunking strategy at a fixed size
+
+A companion run holds chunk size at 128 characters — small enough that boundary
+handling matters — and varies only whether the splitter respects sentence
+boundaries.
+
+![Chunking strategy](../results/figures/chunk_strategy_sensitivity.png)
+
+| strategy | gold chunks avail. | hit rate@5 [95% CI] | MRR | accuracy [95% CI] | abstention | hallucination |
+| --- | --- | --- | --- | --- | --- | --- |
+| fixed | 0.675 | 0.263 [0.179, 0.368] | 0.216 | 0.425 [0.323, 0.534] | 0.550 | 0.025 |
+| recursive | 0.825 | 0.625 [0.515, 0.723] | 0.610 | 0.625 [0.515, 0.723] | 0.375 | 0.000 |
+
+At an identical chunk size, boundary-aware splitting more than doubles hit
+rate@5 (0.263 → 0.625, non-overlapping intervals), raises accuracy by 20 points,
+and takes hallucination to zero. The `gold chunks available` column shows why:
+recursive splitting raises the supply of answer-bearing chunks from 0.675 to
+0.825 per question, because it avoids cutting mid-sentence and so more often
+keeps a value sentence whole — which §2.3's relevance rule requires.
+
+This is worth stating alongside the size sweep because the two are easily
+confused in practice. A team observing poor retrieval at a small chunk size may
+conclude that the size is wrong when the splitter is what is wrong; here, half
+the deficit at 128 characters is recovered without changing the size at all.
+
+Note also that the generator's rescue effect disappears in the recursive
+condition: accuracy equals hit rate exactly (0.625 both). Where fixed-width
+splitting scatters fragments of a fact across several chunks that the generator
+can reassemble, recursive splitting tends to deliver the fact whole or not at
+all — so there is nothing left to assemble.
 
 ---
 
 ## 4. Experiment 2 — Distractor sensitivity
 
 **Varied:** ratio of distractor documents to relevant documents (0× to 4×).
-**Held fixed:** the 40 relevant documents, chunking, *k*, eval question set.
+**Held fixed:** the 80 relevant documents, chunking, *k*, eval question set.
 
 **Hypothesis.** Two failure modes should appear and should be separable:
 
@@ -300,10 +413,13 @@ as "retrieval failed" when the truth is that retrieval did not happen.
 These are stated plainly because the results are only worth as much as their
 caveats.
 
-1. **Small N.** The eval set is 40 questions (30 for Experiment 3). Differences
-   of a few percentage points between adjacent conditions are within noise for
-   samples this size and should not be read as trends. Only large, monotonic
-   movements support any claim.
+1. **Small N.** The eval set is 80 questions (50 for Experiment 3, whose stuffed
+   conditions send the whole corpus with every question and so cost
+   quadratically more). At n = 80 a 95% Wilson interval on a proportion near 0.5
+   is roughly ±11 points, so differences of a few points between adjacent
+   conditions are within noise and are not read as trends anywhere above. Every
+   claim in this paper rests either on a movement whose intervals do not overlap
+   or on a mechanism independently visible in the diagnostic columns.
 
 2. **Synthetic corpus.** The corpus buys exact ground truth and controlled
    distractors at the cost of realism. Its documents are short, uniformly
@@ -363,14 +479,14 @@ against a fresh API key. Pilot output is written to `*-pilotN` files so it
 cannot overwrite a full run, and `n` travels with every metric block, so a
 reduced run is identifiable from its results alone.
 
-Generation and judging go through the Message Batches API by default
-(`generation.use_batch`), which halves the cost: the grid is a few hundred
-independent calls and none of it is latency-sensitive. The trade is that a
-batch is asynchronous — usually well under an hour, with a 24-hour ceiling — so
-a pilot, where the point is to see the judge's output quickly, should pass
-`--no-batch`. Transport does not enter the response cache's key, so batched and
-sequential runs are interchangeable and share cached responses; re-running an
-experiment submits nothing and costs nothing.
+Generation and judging run sequentially by default (`generation.use_batch:
+false`). The Message Batches API is implemented and halves the cost, but the
+runner submits two batches per condition and polls each to completion, so a
+sweep becomes dozens of serialized asynchronous round-trips whose wall-clock is
+bounded only by the API's 24-hour ceiling. Pass `--batch` to opt in where that
+trade is worthwhile. Transport does not enter the response cache's key, so
+batched and sequential runs are interchangeable and share cached responses;
+re-running a completed experiment submits nothing and costs nothing.
 
 Per-condition aggregates land in `results/*.csv`; per-question detail, including
 every prediction and every judge verdict, lands in `results/logs/*.jsonl`.

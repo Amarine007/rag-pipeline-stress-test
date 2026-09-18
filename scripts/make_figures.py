@@ -60,20 +60,47 @@ def style_axes(ax, xlabel: str, ylabel: str, title: str) -> None:
     ax.tick_params(colors=MUTED, labelsize=8)
 
 
+def _spread(values: list[float], minimum_gap: float = 0.055) -> dict[int, float]:
+    """Vertical offsets, in points, that stop near-equal end labels overprinting.
+
+    Series that converge -- hit rate and MRR both reaching ~1.0 -- would
+    otherwise stack their labels in the same place and render as unreadable
+    overlap. Labels are nudged apart only when they actually collide, so a
+    well-separated panel keeps every label on its own point.
+    """
+    order = sorted((v, i) for i, v in enumerate(values) if v is not None)
+    offsets: dict[int, float] = {}
+    previous = None
+    for value, index in order:
+        if previous is not None and value - previous < minimum_gap:
+            offsets[index] = offsets.get(previous_index, 0.0) + 9.0
+        else:
+            offsets[index] = 0.0
+        previous, previous_index = value, index
+    return offsets
+
+
 def plot_series(ax, x, rows, keys_labels, label_last: bool = True) -> None:
     """Draw one panel's series, direct-labeling the final point of each."""
+    finals: list[float | None] = []
     for i, (key, label) in enumerate(keys_labels):
         values = [float(r[key]) if r[key] not in ("", None) else None for r in rows]
+        finals.append(values[-1] if values else None)
         style = SERIES_STYLE[i % len(SERIES_STYLE)]
         ax.plot(
             x, values, label=label, linewidth=2, markersize=6,
             markeredgecolor="white", markeredgewidth=1.2, **style,
         )
-        if label_last and values and values[-1] is not None:
+
+    if label_last:
+        offsets = _spread([v for v in finals])
+        for i, value in enumerate(finals):
+            if value is None:
+                continue
             ax.annotate(
-                f"{values[-1]:.2f}",
-                xy=(x[-1], values[-1]),
-                xytext=(6, 0),
+                f"{value:.2f}",
+                xy=(x[-1], value),
+                xytext=(6, offsets.get(i, 0.0)),
                 textcoords="offset points",
                 fontsize=8,
                 color=MUTED,
@@ -121,12 +148,15 @@ def sweep_figure(csv_name: str, xlabel: str, title: str, out_name: str, log_x: b
     )
     style_axes(right, xlabel, "rate", "Answer quality")
 
-    if log_x:
-        for ax in (left, right):
+    # Tick only at the values actually swept, on either scale: an auto-chosen
+    # tick at, say, 450 would invite reading the curve between conditions that
+    # were never run.
+    for ax in (left, right):
+        if log_x:
             ax.set_xscale("log")
-            ax.set_xticks(x)
-            ax.set_xticklabels([str(int(v)) for v in x])
-            ax.minorticks_off()
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{v:g}" for v in x])
+        ax.minorticks_off()
 
     fig.suptitle(title, fontsize=13, color=INK, x=0.06, ha="left", y=0.99)
     fig.text(0.06, 0.005, f"n = {n} questions per condition", fontsize=8, color=MUTED)
@@ -134,6 +164,76 @@ def sweep_figure(csv_name: str, xlabel: str, title: str, out_name: str, log_x: b
 
     FIGURES.mkdir(parents=True, exist_ok=True)
     out = FIGURES / out_name
+    fig.savefig(out, dpi=200, facecolor=fig.get_facecolor())
+    plt.close(fig)
+    print(f"  wrote {out.relative_to(PROJECT_ROOT)}")
+    return rows
+
+
+def strategy_figure():
+    """Grouped bars for experiment 1b, whose conditions are categorical.
+
+    `sweep_figure` cannot serve this one: its x values are strategy names, not
+    numbers, and a line joining `fixed` to `recursive` would imply a continuum
+    between two discrete chunkers. Retrieval and answer metrics stay in separate
+    panels here for the same reason they do everywhere else.
+    """
+    path = RESULTS / "chunk_strategy_sensitivity.csv"
+    if not path.exists():
+        print("  skipped chunk_strategy_sensitivity.csv (not found -- run the experiment first)")
+        return None
+
+    rows = read_csv(path)
+    labels = [r["value"] for r in rows]
+    positions = range(len(labels))
+
+    panels = (
+        ("Retrieval quality", [("hit_rate_at_k", "hit rate@k"), ("mrr", "MRR"),
+                               ("precision_at_k", "precision@k")]),
+        ("Answer quality", [("accuracy", "accuracy"), ("abstention_rate", "abstention"),
+                            ("hallucination_rate", "hallucination")]),
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    fig.patch.set_facecolor("#fcfcfb")
+
+    width = 0.26
+    for ax, (title, keys_labels) in zip(axes, panels):
+        ax.set_facecolor("#fcfcfb")
+        for i, (key, label) in enumerate(keys_labels):
+            offset = (i - 1) * width
+            values = [float(r[key]) for r in rows]
+            ax.bar(
+                [p + offset for p in positions], values, width=width, label=label,
+                color=SERIES_STYLE[i]["color"], zorder=3,
+            )
+            for p, value in zip(positions, values):
+                ax.annotate(
+                    f"{value:.2f}", xy=(p + offset, value), xytext=(0, 3),
+                    textcoords="offset points", ha="center", fontsize=7.5, color=MUTED,
+                )
+        style_axes(ax, "chunking strategy", "score", title)
+        ax.set_xticks(list(positions))
+        ax.set_xticklabels(labels)
+        ax.grid(axis="x", visible=False)
+        ax.legend(frameon=False, fontsize=8, labelcolor=MUTED, loc="upper left")
+
+    n = rows[0]["n"]
+    size = rows[0].get("mean_chunk_chars", "")
+    fig.suptitle(
+        "Chunking strategy at a fixed chunk size", fontsize=13, color=INK,
+        x=0.06, ha="left", y=0.99,
+    )
+    fig.text(
+        0.06, 0.005,
+        f"n = {n} questions per condition, chunk size held at 128 characters"
+        + (f" (mean chunk: {float(size):.0f} chars)" if size else ""),
+        fontsize=8, color=MUTED,
+    )
+    fig.tight_layout(rect=(0, 0.02, 1, 0.95))
+
+    FIGURES.mkdir(parents=True, exist_ok=True)
+    out = FIGURES / "chunk_strategy_sensitivity.png"
     fig.savefig(out, dpi=200, facecolor=fig.get_facecolor())
     plt.close(fig)
     print(f"  wrote {out.relative_to(PROJECT_ROOT)}")
@@ -236,8 +336,12 @@ def main() -> int:
         "chunk size (characters)",
         "Chunk-size sensitivity",
         "chunk_size_sensitivity.png",
-        log_x=True,
+        # Linear, not log. The swept sizes are near-evenly spaced above 200, and
+        # a log axis compresses the top end until the 700 and 800 tick labels
+        # overprint -- exactly where the interesting recovery happens.
+        log_x=False,
     )
+    strategy = strategy_figure()
     distractor = sweep_figure(
         "distractor_sensitivity.csv",
         "distractor ratio (distractors per relevant document)",
@@ -249,6 +353,7 @@ def main() -> int:
     if args.tables:
         for name, rows, columns in (
             ("Chunk-size sensitivity", chunk, SWEEP_COLUMNS),
+            ("Chunking strategy", strategy, SWEEP_COLUMNS),
             ("Distractor sensitivity", distractor, SWEEP_COLUMNS),
             (
                 "Long-context vs. retrieval",
