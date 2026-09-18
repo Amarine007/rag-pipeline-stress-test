@@ -58,7 +58,11 @@ generation:
   max_tokens: 1024
   effort: low
   use_cache: true
-  use_batch: true            # Batches API: half price, async -- the grid is not latency-sensitive
+  # Sequential, not batched. Batching halves cost, but the implementation
+  # submits two batches per condition and polls each to completion, so a sweep
+  # means dozens of serialized round-trips with unpredictable wall-clock. The
+  # few dollars saved are not worth the uncertainty; `--batch` still overrides.
+  use_batch: false
 
 judge:
   model: claude-opus-5

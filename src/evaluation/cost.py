@@ -93,9 +93,13 @@ def format_cost_report(
     usage = total_usage(usages)
     measured = price_usage(usage, model, batched)
 
+    # Two independent counters, not a subset: `api_calls` counts requests that
+    # reached the API and were paid for, `cached_calls` counts requests answered
+    # from disk that never became API calls at all. Phrasing them as "N calls, M
+    # of them cached" would imply the second is part of the first.
     lines = [
-        f"  API calls:     {measured.api_calls} "
-        f"({measured.cached_calls} served from cache, costing nothing)",
+        f"  API calls:     {measured.api_calls} paid, "
+        f"plus {measured.cached_calls} replayed from cache at no cost",
         f"  Tokens:        {measured.input_tokens:,} in / {measured.output_tokens:,} out",
         f"  Cost:          ${measured.usd:.2f}"
         + ("  (batched, 50% rate)" if batched else "  (sequential, full rate)"),
