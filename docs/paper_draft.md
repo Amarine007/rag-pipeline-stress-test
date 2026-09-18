@@ -382,7 +382,73 @@ rises.
 
 ### 4.1 Results
 
-`[PENDING — experiment not yet run]`
+n = 80 questions per condition. The 80 relevant documents are byte-identical
+across every row; only the surrounding noise changes.
+
+![Distractor sensitivity](../results/figures/distractor_sensitivity.png)
+
+| ratio | corpus docs | gold chunks avail. | hit rate@5 [95% CI] | MRR | precision@5 | accuracy [95% CI] | abstention | hallucination |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0x | 80 | 1.038 | 1.000 [0.954, 1.000] | 0.933 | 0.208 | 1.000 [0.954, 1.000] | 0.000 | 0.000 |
+| 0.5x | 120 | 1.038 | 1.000 [0.954, 1.000] | 0.917 | 0.208 | 1.000 [0.954, 1.000] | 0.000 | 0.000 |
+| 1x | 160 | 1.038 | 1.000 [0.954, 1.000] | 0.899 | 0.208 | 1.000 [0.954, 1.000] | 0.000 | 0.000 |
+| 2x | 240 | 1.038 | 0.988 [0.933, 0.998] | 0.872 | 0.202 | 0.988 [0.933, 0.998] | 0.013 | 0.000 |
+| 3x | 320 | 1.038 | 0.938 [0.862, 0.973] | 0.846 | 0.193 | 0.938 [0.862, 0.973] | 0.062 | 0.000 |
+| 4x | 400 | 1.038 | 0.938 [0.862, 0.973] | 0.846 | 0.193 | 0.938 [0.862, 0.973] | 0.062 | 0.000 |
+
+The `gold chunks available` column is constant at 1.038 across every row,
+confirming the control: the answer-bearing chunks are identical in every
+condition, so nothing below is an artifact of the corpus changing shape.
+
+**Neither hypothesized failure mode appears at the ratios tested.** The
+predicted generation failure — the gold chunk present but the model reporting a
+distractor's value — does not occur even once. Hallucination is 0.000 in all six
+conditions, at every ratio up to 400 documents. Accuracy and hit rate@5 are
+equal to three decimal places in every row, which is the signature of a
+generator that answers correctly whenever the retriever supplies the fact and
+abstains whenever it does not. All of the (small) degradation is retrieval, and
+all of it surfaces as abstention.
+
+This is a negative result and is reported as one. Quadrupling the corpus with
+template-identical near-miss distractors cost 6 points of accuracy
+(1.000 → 0.938), and the intervals at 0x and 4x overlap, so even that movement
+is at the edge of what n = 80 can support.
+
+**The informative signal is in MRR, not hit rate.** MRR falls monotonically and
+substantially — 0.933 → 0.846 — while hit rate@5 holds at 1.000 through 1x and
+only slips to 0.938 by 3x. Distractors *are* crowding the gold chunk, pushing it
+steadily down the ranking, but at k = 5 there is enough headroom to absorb it.
+Rank degrades long before retrieval fails. A pipeline reporting only hit rate@k
+at a generous k would see a flat line here and conclude it was robust to
+distractors; the same pipeline at k = 1 would already be losing answers. MRR is
+the leading indicator, and this is the clearest argument in the paper for
+reporting several retrieval metrics rather than one.
+
+**Failures are a property of the question, not of the noise.** The set of
+questions answered incorrectly is strictly nested as noise rises: {} at 0x
+through 1x, {q-0035} at 2x, and {q-0035, q-0052, q-0059, q-0075, q-0078} at both
+3x and 4x. Adding 80 more distractors between 3x and 4x broke nothing new, which
+is why those two rows are identical to three decimals despite being genuinely
+different corpora of 320 and 400 documents. Vulnerability to distractors is
+concentrated in a minority of questions — presumably those whose phrasing sits
+closest to some distractor in embedding space — rather than distributed
+uniformly across the eval set. Mean accuracy therefore understates how sharply
+the population splits: most questions are completely unaffected, and a few fail
+as soon as enough noise exists to displace them.
+
+**What this does and does not license.** The honest reading is that this
+configuration is robust to this kind of distractor at these ratios, not that RAG
+is robust to distractors. Three specific reasons for caution: k = 5 with roughly
+one gold chunk per question leaves four slots of headroom, so ranking pressure
+is absorbed rather than expressed; the distractors share templates with the gold
+documents but the *questions* name a specific system, which a dense retriever
+can key on; and §2.2's uniqueness invariant guarantees the answer string appears
+in exactly one document, so a model reading a value off the wrong document is
+always scored wrong. That invariant is what makes the zero hallucination rate
+meaningful — before it was enforced, the answer string appeared in some other
+document for every question, and a model could have scored correct by luck.
+Testing at k = 1, or with distractors that reuse system names, would very likely
+find the failure modes this experiment did not.
 
 ---
 

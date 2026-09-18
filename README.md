@@ -31,25 +31,61 @@ interesting signal.
 
 ## Status
 
-🚧 **In progress.** The pipeline is complete and tested. One of the three stress tests has been
-run; the other two and the paper's results sections are outstanding.
+🚧 **In progress.** The pipeline is complete and tested. Experiments 1 and 2 have run and are
+written up; experiment 3 and the final polish are outstanding.
 
-**Experiment 1 — chunk-size sensitivity** (8 chunk sizes, n=80 questions, `claude-opus-5`):
+### Experiment 1 — chunk-size sensitivity
 
-| chunk size (chars) | 64 | 128 | 200 | 300 | 400 | 600 | 800 | 1200 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| hit rate@5 | 0.000 | 0.263 | 0.700 | 0.850 | 0.938 | 0.875 | 1.000 | 1.000 |
-| answer accuracy | 0.025 | 0.425 | 0.825 | 0.912 | 0.988 | 0.875 | 1.000 | 1.000 |
-| hallucination rate | 0.013 | 0.025 | 0.000 | 0.000 | 0.000 | 0.013 | 0.000 | 0.000 |
+9 chunk sizes, n=80 questions, `claude-opus-5`. Documents in this corpus run 611–762 characters.
 
-Retrieval and answer quality are reported separately and never combined. Two observations, both
-with 95% confidence intervals computed and neither yet written up: answer accuracy exceeds hit
-rate@5 wherever retrieval is imperfect — by 16 points at chunk size 128 — because the generator
-reassembles facts from fragments that the retrieval metric scores as misses; and degradation runs
-almost entirely through abstention rather than fabrication.
+| chunk size (chars) | 64 | 128 | 200 | 300 | 400 | 500 | 600 | 700 | 800 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| hit rate@5 | 0.000 | 0.263 | 0.700 | 0.850 | 0.938 | 0.875 | 0.875 | 1.000 | 1.000 |
+| answer accuracy | 0.025 | 0.425 | 0.825 | 0.912 | 0.988 | 0.950 | 0.875 | 1.000 | 1.000 |
+| hallucination rate | 0.013 | 0.025 | 0.000 | 0.000 | 0.000 | 0.000 | 0.013 | 0.000 | 0.000 |
 
-Full per-condition results are in `results/`. Read every number against its N: n=80 puts the 95%
-interval on a proportion at roughly ±11 points, so only large movements support a claim.
+Three findings:
+
+- **The worst chunk size is not the smallest.** Accuracy peaks at 400, dips to a trough at 600,
+  then recovers completely at 700. The trough's interval does not overlap the recovery's, so the
+  curve is genuinely non-monotonic. A chunk size *slightly below typical document length* is a
+  trap: it cuts each document into one large chunk and one useless fragment. This is a claim
+  about the relationship between chunk size and document length, not about any absolute size.
+- **Answer accuracy exceeds hit rate@5 wherever retrieval is imperfect** — by 16 points at chunk
+  size 128 — because the generator reassembles facts from fragments the retrieval metric scores
+  as misses. The gap is the measurement of how much the generator rescues a mediocre retriever.
+- **Degradation runs through abstention, not fabrication.** Hallucination never exceeds 2
+  questions in 80, and is exactly zero in five of nine conditions.
+
+A companion run varies only the chunking *strategy* at a fixed 128-character size: boundary-aware
+recursive splitting more than doubles hit rate@5 (0.263 → 0.625) and takes hallucination to zero,
+without changing the chunk size at all.
+
+### Experiment 2 — distractor sensitivity
+
+6 ratios (0× to 4×, up to 400 documents), n=80 questions. **A negative result, reported as one:**
+neither hypothesized failure mode appeared. Hallucination stayed at exactly 0.000 in every
+condition, and accuracy tracked hit rate@5 to three decimals throughout — the signature of a
+generator that answers when the retriever supplies the fact and abstains when it does not.
+
+| distractor ratio | 0× | 0.5× | 1× | 2× | 3× | 4× |
+| --- | --- | --- | --- | --- | --- | --- |
+| hit rate@5 | 1.000 | 1.000 | 1.000 | 0.988 | 0.938 | 0.938 |
+| MRR | 0.933 | 0.917 | 0.899 | 0.872 | 0.846 | 0.846 |
+| answer accuracy | 1.000 | 1.000 | 1.000 | 0.988 | 0.938 | 0.938 |
+| hallucination rate | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+
+The signal is in **MRR, not hit rate**. MRR falls steadily (0.933 → 0.846) while hit rate@5 holds
+at 1.000 through 1×: distractors are pushing the gold chunk down the ranking, but k=5 has enough
+headroom to absorb it. A pipeline reporting only hit rate@k at a generous k would read as robust
+here while the same pipeline at k=1 was already losing answers.
+
+Failures are also a property of the question rather than of the noise — the set of failing
+questions is strictly nested as distractors are added, and the same five fail at both 3× and 4×.
+
+Full per-condition results are in `results/`, per-question detail in `results/logs/`. Read every
+number against its N: n=80 puts the 95% Wilson interval on a proportion near 0.5 at roughly ±11
+points, so only large movements support a claim.
 
 ## Setup
 
