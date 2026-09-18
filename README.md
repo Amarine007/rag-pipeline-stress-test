@@ -31,8 +31,25 @@ interesting signal.
 
 ## Status
 
-🚧 **In progress.** Scaffolding complete; pipeline stages and experiments are being built
-incrementally. Results and the paper draft are not yet available.
+🚧 **In progress.** The pipeline is complete and tested. One of the three stress tests has been
+run; the other two and the paper's results sections are outstanding.
+
+**Experiment 1 — chunk-size sensitivity** (8 chunk sizes, n=80 questions, `claude-opus-5`):
+
+| chunk size (chars) | 64 | 128 | 200 | 300 | 400 | 600 | 800 | 1200 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| hit rate@5 | 0.000 | 0.263 | 0.700 | 0.850 | 0.938 | 0.875 | 1.000 | 1.000 |
+| answer accuracy | 0.025 | 0.425 | 0.825 | 0.912 | 0.988 | 0.875 | 1.000 | 1.000 |
+| hallucination rate | 0.013 | 0.025 | 0.000 | 0.000 | 0.000 | 0.013 | 0.000 | 0.000 |
+
+Retrieval and answer quality are reported separately and never combined. Two observations, both
+with 95% confidence intervals computed and neither yet written up: answer accuracy exceeds hit
+rate@5 wherever retrieval is imperfect — by 16 points at chunk size 128 — because the generator
+reassembles facts from fragments that the retrieval metric scores as misses; and degradation runs
+almost entirely through abstention rather than fabrication.
+
+Full per-condition results are in `results/`. Read every number against its N: n=80 puts the 95%
+interval on a proportion at roughly ±11 points, so only large movements support a claim.
 
 ## Setup
 
