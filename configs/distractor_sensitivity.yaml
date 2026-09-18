@@ -21,7 +21,7 @@ description: >
 seed: 20260917
 
 corpus:
-  n_relevant_docs: 40
+  n_relevant_docs: 80
   distractor_ratio: 0.0
   filler_sentences_per_doc: 6
   fact_sentences: 3          # facts span setup/value/elaboration, not one tidy sentence

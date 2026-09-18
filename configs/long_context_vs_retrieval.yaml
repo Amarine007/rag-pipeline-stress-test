@@ -27,10 +27,13 @@ description: >
 seed: 20260917
 
 corpus:
-  # Deliberately smaller than the other experiments: every stuffed condition
-  # sends the entire corpus in the prompt for every question, so corpus size
-  # drives cost directly.
-  n_relevant_docs: 30
+  # Deliberately smaller than the other experiments (80). Every stuffed
+  # condition sends the entire corpus in the prompt for every question, so
+  # cost here scales with the SQUARE of this number -- more questions, and a
+  # larger context in each. Measured: 50 costs $6.64 batched, 80 costs $17.04.
+  # The eval set therefore differs from the other experiments, which the brief
+  # anticipates ('the same fixed eval question set where possible').
+  n_relevant_docs: 50
   distractor_ratio: 1.0      # filler that makes the stuffed context long enough to matter
   filler_sentences_per_doc: 6
   fact_sentences: 3          # facts span setup/value/elaboration, not one tidy sentence
